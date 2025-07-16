@@ -33,6 +33,8 @@ add_library(llama
             llama-memory-hybrid-idx.cpp
             llama-memory-recurrent.cpp
             llama-mmap.cpp
+            llama-model-load-input.cpp
+            llama-model-load.cpp
             llama-model-loader.cpp
             llama-model-saver.cpp
             llama-model.cpp
