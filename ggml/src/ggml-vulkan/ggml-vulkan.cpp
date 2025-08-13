@@ -1075,7 +1075,6 @@ struct vk_device_struct {
     vk_pipeline pipeline_leaky_relu[2];
     vk_pipeline pipeline_silu_back_f32;
     vk_pipeline pipeline_diag_mask_inf_f32;
-    vk_pipeline pipeline_cross_entropy_loss_back_f32;
     vk_pipeline pipeline_cross_entropy_loss_masked_back_f32;
     vk_pipeline pipeline_count_equal_masked_i32;
     vk_pipeline pipeline_soft_max_f32, pipeline_soft_max_f32_f16;
@@ -11799,11 +11798,6 @@ static vk_pipeline ggml_vk_op_get_pipeline(ggml_backend_vk_context * ctx, const 
             return ctx->device->pipeline_diag_mask_inf_f32;
         }
         return nullptr;
-    case GGML_OP_CROSS_ENTROPY_LOSS_BACK:
-        if (src0->type == GGML_TYPE_F32 && src1->type == GGML_TYPE_F32 && src2->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32) {
-            return ctx->device->pipeline_cross_entropy_loss_back_f32;
-        }
-        return nullptr;
     case GGML_OP_CROSS_ENTROPY_LOSS_MASKED_BACK:
         if (src0->type == GGML_TYPE_F32 && src1->type == GGML_TYPE_F32 && src2->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32) {
             return ctx->device->pipeline_cross_entropy_loss_masked_back_f32;
@@ -12403,18 +12397,6 @@ static void ggml_vk_op_f32(ggml_backend_vk_context * ctx, vk_context& subctx, co
     case GGML_OP_SOLVE_TRI:
         {
             uint32_t nr = (uint32_t)(ne02 * ne03);
-            if (nr > 262144) {
-                elements = { 512, 512, CEIL_DIV(nr, 262144) };
-            } else if (nr > 512) {
-                elements = { 512, CEIL_DIV(nr, 512), 1 };
-            } else {
-                elements = { nr, 1, 1 };
-            }
-        }
-        break;
-    case GGML_OP_CROSS_ENTROPY_LOSS_BACK:
-        {
-            const uint32_t nr = ggml_nrows(src1);
             if (nr > 262144) {
                 elements = { 512, 512, CEIL_DIV(nr, 262144) };
             } else if (nr > 512) {
@@ -13887,18 +13869,6 @@ static void ggml_vk_glu(ggml_backend_vk_context * ctx, vk_context& subctx, const
 static void ggml_vk_diag_mask_inf(ggml_backend_vk_context * ctx, vk_context& subctx, const ggml_tensor * src0, ggml_tensor * dst) {
     int32_t * op_params = (int32_t *)dst->op_params;
     ggml_vk_op_f32<vk_op_diag_mask_push_constants>(ctx, subctx, src0, nullptr, nullptr, nullptr, dst, GGML_OP_DIAG_MASK_INF, { (uint32_t)src0->ne[0], (uint32_t)src0->ne[1], op_params[0] });
-}
-
-static void ggml_vk_cross_entropy_loss_back(ggml_backend_vk_context * ctx, vk_context& subctx, const ggml_tensor * src0, const ggml_tensor * src1, const ggml_tensor * src2, ggml_tensor * dst) {
-    const int64_t nclasses = src1->ne[0];
-    const int64_t nrows = ggml_nrows(src1);
-
-    ggml_vk_op_f32<vk_op_push_constants>(ctx, subctx, src0, src1, src2, nullptr, dst, GGML_OP_CROSS_ENTROPY_LOSS_BACK, {
-        (uint32_t)nclasses,
-        (uint32_t)nrows,
-        0.0f,
-        0.0f
-    });
 }
 
 static void ggml_vk_op_f32_cross_entropy_loss_masked_back(ggml_backend_vk_context * ctx, vk_context& subctx, ggml_tensor * dst, const vk_op_push_constants&& pc) {
@@ -16309,9 +16279,6 @@ static bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgr
 
         break;
 
-    case GGML_OP_CROSS_ENTROPY_LOSS_BACK:
-        ggml_vk_cross_entropy_loss_back(ctx, compute_ctx, src0, src1, src2, node);
-        break;
     case GGML_OP_CROSS_ENTROPY_LOSS_MASKED_BACK:
         ggml_vk_cross_entropy_loss_masked_back(ctx, compute_ctx, node);
         break;
