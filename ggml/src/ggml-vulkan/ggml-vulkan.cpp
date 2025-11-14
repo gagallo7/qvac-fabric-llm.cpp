@@ -4019,12 +4019,6 @@ vk_device ggml_vk_get_device(size_t idx) {
         const char* GGML_VK_PREFER_HOST_MEMORY = getenv("GGML_VK_PREFER_HOST_MEMORY");
         device->prefer_host_memory = GGML_VK_PREFER_HOST_MEMORY != nullptr;
 
-        const char* GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM = getenv("GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM");
-        device->disable_host_visible_vidmem = GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM != nullptr;
-
-        const char* GGML_VK_ALLOW_SYSMEM_FALLBACK = getenv("GGML_VK_ALLOW_SYSMEM_FALLBACK");
-        device->allow_sysmem_fallback = GGML_VK_ALLOW_SYSMEM_FALLBACK != nullptr;
-
         const char* GGML_VK_DISABLE_GRAPH_OPTIMIZE = getenv("GGML_VK_DISABLE_GRAPH_OPTIMIZE");
         device->disable_graph_optimize = GGML_VK_DISABLE_GRAPH_OPTIMIZE != nullptr;
 
@@ -4774,6 +4768,29 @@ vk_device ggml_vk_get_device(size_t idx) {
         if (device->device_fault) {
             device->pfn_vkGetDeviceFaultInfoEXT = (PFN_vkGetDeviceFaultInfoEXT)
                 vkGetDeviceProcAddr(device->device, "vkGetDeviceFaultInfoEXT");
+        }
+
+        {
+            VmaAllocatorCreateFlags vmaFlags = (device->buffer_device_address ? VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT : 0);
+
+            VmaAllocatorCreateInfo allocatorCreateInfo = {};
+            allocatorCreateInfo.flags = vmaFlags;
+            allocatorCreateInfo.vulkanApiVersion = vk::enumerateInstanceVersion();
+            allocatorCreateInfo.physicalDevice = device->physical_device;
+            allocatorCreateInfo.device = device->device;
+            allocatorCreateInfo.instance = vk_instance.instance;
+
+#ifdef VMA_DYNAMIC_VULKAN_FUNCTIONS
+            static VmaVulkanFunctions vulkanFunctions = {};
+            vulkanFunctions.vkGetInstanceProcAddr = &vkGetInstanceProcAddr;
+            vulkanFunctions.vkGetDeviceProcAddr = &vkGetDeviceProcAddr;
+            allocatorCreateInfo.pVulkanFunctions = &vulkanFunctions;
+#endif
+
+            VkResult res = vmaCreateAllocator(&allocatorCreateInfo, &device->allocator);
+            if (res != VK_SUCCESS) {
+                throw vk::SystemError(static_cast<vk::Result>(res), "vmaCreateAllocator failed");
+            }
         }
 
         // Queues
@@ -13081,7 +13098,6 @@ static void ggml_backend_vk_host_buffer_free_buffer(ggml_backend_buffer_t buffer
 static ggml_backend_buffer_t ggml_backend_vk_host_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
     VK_LOG_MEMORY("ggml_backend_vk_host_buffer_type_alloc_buffer(" << size << ")");
 
-    size += 32;  // Behave like the CPU buffer type
     void * ptr = nullptr;
     try {
         ptr = ggml_vk_host_malloc(vk_instance.devices[0], size);
@@ -13203,10 +13219,10 @@ static void ggml_backend_vk_set_tensor_2d_async(ggml_backend_t backend, ggml_ten
         cpy_ctx->s->buffer->buf.copyBuffer(ctx->sync_staging->buffer, buf->buffer, slices);
 
         if (size == stride_data) {
-            deferred_memcpy(ctx->sync_staging->ptr, data, staging_size, &cpy_ctx->in_memcpys);
+            deferred_memcpy(ctx->sync_staging->info.pMappedData, data, staging_size, &cpy_ctx->in_memcpys);
         } else {
             for (size_t i = 0; i < n_copies; i++) {
-                deferred_memcpy((uint8_t *)ctx->sync_staging->ptr + i * size, (const uint8_t *)data + i * stride_data, size, &cpy_ctx->in_memcpys);
+                deferred_memcpy((uint8_t *)ctx->sync_staging->info.pMappedData + i * size, (const uint8_t *)data + i * stride_data, size, &cpy_ctx->in_memcpys);
             }
         }
         ggml_vk_synchronize(ctx);
@@ -13259,10 +13275,10 @@ static void ggml_backend_vk_get_tensor_2d_async(ggml_backend_t backend, const gg
         compute_ctx->s->buffer->buf.copyBuffer(buf->buffer, ctx->sync_staging->buffer, slices);
 
         if (size == stride_data) {
-            deferred_memcpy(data, ctx->sync_staging->ptr, staging_size, &compute_ctx->out_memcpys);
+            deferred_memcpy(data, ctx->sync_staging->info.pMappedData, staging_size, &compute_ctx->out_memcpys);
         } else {
             for (size_t i = 0; i < n_copies; i++) {
-                deferred_memcpy((uint8_t *)data + i * stride_data, (const uint8_t *)ctx->sync_staging->ptr + i * size, size, &compute_ctx->out_memcpys);
+                deferred_memcpy((uint8_t *)data + i * stride_data, (const uint8_t *)ctx->sync_staging->info.pMappedData + i * size, size, &compute_ctx->out_memcpys);
             }
         }
         ggml_vk_synchronize(ctx);
@@ -16377,6 +16393,8 @@ vk_device_struct::~vk_device_struct() {
     all_pipelines.clear();
 
     device.destroyDescriptorSetLayout(dsl);
+
+    vmaDestroyAllocator(allocator);
 
     device.destroy();
 }
