@@ -2772,7 +2772,8 @@ ggml_opt_dataset_t common_opt_sft_dataset_init(
                 while (true) {
                     size_t open = render.find(GEMMA_START, from);
                     if (open == std::string::npos) break;
-                    size_t lo = open;
+                    // Skip past "<start_of_turn>model\n" — supervise content only, not the role header
+                    size_t lo = open + GEMMA_START.size();
                     size_t close = render.find(GEMMA_END, lo);
                     if (close == std::string::npos) {
                         assistant_spans.push_back({lo, render.size()});
@@ -2780,9 +2781,6 @@ ggml_opt_dataset_t common_opt_sft_dataset_init(
                     }
 
                     size_t hi = close + GEMMA_END.size();
-                    if (hi < render.size() && render[hi] == '\n') {
-                        hi++;
-                    }
                     assistant_spans.push_back({lo, std::min(hi, render.size())});
 
                     from = hi;
@@ -2793,8 +2791,8 @@ ggml_opt_dataset_t common_opt_sft_dataset_init(
                     size_t open = render.find(START_AST, from);
                     if (open == std::string::npos) break;
 
-                    // Include the role token ("assistant") and everything through the closing tag/newlines
-                    size_t lo = open + START_TAG.size();
+                    // Skip past "<|im_start|>assistant\n" — supervise content only, not the role header
+                    size_t lo = open + START_AST.size();
                     if (lo > render.size()) {
                         lo = render.size();
                     }
@@ -2806,15 +2804,10 @@ ggml_opt_dataset_t common_opt_sft_dataset_init(
                     }
 
                     size_t hi = close + END_TAG.size();
-                    if (hi <= lo) {
-                        lo = open;
-                        hi = close + END_TAG.size();
-                    }
 
                     assistant_spans.push_back({lo, std::min(hi, render.size())});
 
-                    size_t next_from = hi;
-                    from = next_from;
+                    from = hi;
                 }
             }
         }
