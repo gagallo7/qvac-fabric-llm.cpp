@@ -2846,7 +2846,7 @@ private:
     size_t size_written = 0;
 
     struct write_info {
-        ggml_tensor * tensor;
+        const ggml_tensor * tensor;
         uint8_t * ptr;
         size_t size;
         size_t offset;
@@ -2865,14 +2865,19 @@ public:
         }
     }
 
-    void read(void * dst, size_t size) override {
+    const uint8_t * read(size_t size) override {
         if (size > buf_size) {
             throw std::runtime_error("unexpectedly reached end of buffer");
         }
-        memcpy(dst, ptr, size);
+        const uint8_t * cur = ptr;
         ptr += size;
         size_read += size;
         buf_size -= size;
+        return cur;
+    }
+
+    void read_to(void * dst, size_t size) override {
+        memcpy(dst, read(size), size);
     }
 
     void read_tensor(ggml_tensor * tensor, size_t offset, size_t size) override {
@@ -2939,15 +2944,15 @@ class llama_io_read_file : public llama_io_read_i {
 public:
     llama_io_read_file(llama_file * f) : file(f) {}
 
-    void read(void * dst, size_t size) override {
+    void read_to(void * dst, size_t size) override {
         file->read_raw(dst, size);
         size_read += size;
     }
 
-    void read_tensor(ggml_tensor * tensor, size_t offset, size_t size) override {
+    const uint8_t * read(size_t size) override {
         temp_buffer.resize(size);
-        read(temp_buffer.data(), size);
-        ggml_backend_tensor_set(tensor, temp_buffer.data(), offset, size);
+        read_to(temp_buffer.data(), size);
+        return temp_buffer.data();
     }
 
     size_t n_bytes() override {
@@ -3068,8 +3073,8 @@ public:
     }
 
     void write_tensor(ggml_tensor * tensor, size_t offset, size_t size) override {
-        // save the write for later during destruction
-        winfos.push_back({tensor, ptr, size, offset});
+        // save the write for later during destruction; ggml_view_1d() needs a mutable tensor
+        winfos.push_back({const_cast<ggml_tensor *>(tensor), ptr, size, offset});
     }
 
     size_t n_bytes() override {
@@ -3227,14 +3232,19 @@ public:
         GGML_ASSERT(buf_size == 0);
     }
 
-    void read(void * dst, size_t size) override {
+    const uint8_t * read(size_t size) override {
         if (size > buf_size) {
             throw std::runtime_error("unexpectedly reached end of buffer");
         }
-        memcpy(dst, ptr, size);
+        const uint8_t * cur = ptr;
         ptr += size;
         size_read += size;
         buf_size -= size;
+        return cur;
+    }
+
+    void read_to(void * dst, size_t size) override {
+        memcpy(dst, read(size), size);
     }
 
     void read_tensor(ggml_tensor * tensor, size_t offset, size_t size) override {
@@ -4755,7 +4765,7 @@ struct llama_opt_params llama_opt_default_params(void) {
         /*n_ctx_train          =*/ 0,
         /*param_filter         =*/ llama_opt_param_filter_all,
         /*param_filter_ud      =*/ nullptr,
-        /*get_opt_pars         =*/ nullptr,
+        /*get_opt_pars         =*/ ggml_opt_get_default_optimizer_params,
         /*get_opt_pars_ud      =*/ nullptr,
         /*optimizer_type       =*/ GGML_OPT_OPTIMIZER_TYPE_ADAMW,
         /*checkpoint_path      =*/ nullptr,
