@@ -204,6 +204,9 @@ set(GGML_OPENCL_KERNELS
     mul
     neg
     norm
+    hardsigmoid
+    hardswish
+    pool_2d
     relu
     l2_norm
     rms_norm
@@ -239,6 +242,7 @@ set(GGML_OPENCL_KERNELS
     mul_mm_f16_f32_kq_kqv
     conv2d
     conv2d_f16_f32
+    conv2d_dw
     flash_attn_pre_f16
     flash_attn_f32_f16
     flash_attn_f32_q8_0
