@@ -2598,9 +2598,8 @@ bool llama_kv_cache::state_read_meta(llama_io_read_i & io, uint32_t strm, uint32
             }
         }
 
-        // note: apply_ubatch() rebuilds llama_kv_cell_ext from the ubatch
-        //       only ext.tok and the M-RoPE 2D position round-trip through it
-        //       see: https://github.com/ggml-org/llama.cpp/pull/16825#issuecomment-3460868350
+        // Preserve M-RoPE spatial metadata by passing ext.y/ext.x through the
+        // ubatch position planes; apply_ubatch() writes them back via ext_set().
         apply_ubatch(sinfo, ubatch);
 
         // apply_ubatch() takes the 2D position from the ubatch, and that ubatch is built with this
