@@ -1087,6 +1087,7 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "RMS_NORM_BACK",
     "GROUP_NORM",
     "L2_NORM",
+    "L2_NORM_BACK",
 
     "MUL_MAT",
     "MUL_MAT_ID",
@@ -1173,7 +1174,7 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "GLU",
 };
 
-static_assert(GGML_OP_COUNT == 109, "GGML_OP_COUNT != 109");
+static_assert(GGML_OP_COUNT == 110, "GGML_OP_COUNT != 110");
 
 static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "none",
@@ -1210,6 +1211,7 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "rms_norm_back(x)",
     "group_norm(x)",
     "l2_norm(x)",
+    "l2_norm_back(x)",
 
     "X*Y",
     "X[i]*Y",
@@ -1296,7 +1298,7 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "glu(x)",
 };
 
-static_assert(GGML_OP_COUNT == 109, "GGML_OP_COUNT != 109");
+static_assert(GGML_OP_COUNT == 110, "GGML_OP_COUNT != 110");
 
 static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
 
@@ -3479,6 +3481,24 @@ bool ggml_prec_set_src(
     };
 
     return true;
+}
+
+// ggml_l2_norm_back
+
+struct ggml_tensor * ggml_l2_norm_back(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        struct ggml_tensor  * b,
+        float                 eps) {
+    struct ggml_tensor * result = ggml_dup_tensor(ctx, a);
+
+    ggml_set_op_params_f32(result, 0, eps);
+
+    result->op     = GGML_OP_L2_NORM_BACK;
+    result->src[0] = a;
+    result->src[1] = b;
+
+    return result;
 }
 
 // ggml_mul_mat
@@ -7555,9 +7575,15 @@ static void ggml_compute_backward(
                 ggml_add_or_set(ctx, cgraph, isrc1, ggml_cont(ctx, grad_b));
             }
         } break;
-        case GGML_OP_SSM_CONV:
-        case GGML_OP_GATED_DELTA_NET:
         case GGML_OP_L2_NORM: {
+            if (src0_needs_grads) {
+                float eps;
+                memcpy(&eps, tensor->op_params, sizeof(float));
+                ggml_add_or_set(ctx, cgraph, isrc0, ggml_l2_norm_back(ctx, grad, src0, eps));
+            }
+        } break;
+        case GGML_OP_SSM_CONV:
+        case GGML_OP_GATED_DELTA_NET: {
             // Stop-gradient: analytical backward not implemented for SSM/recurrent ops.
             // Inputs receive zero gradient. Residual bypass in hybrid archs
             // (Qwen3Next, Mamba-attn hybrids) preserves loss propagation to upstream
