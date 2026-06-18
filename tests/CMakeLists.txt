@@ -310,6 +310,12 @@ if (GGML_METAL AND NOT GGML_METAL_EMBED_LIBRARY)
     set_tests_properties(test-backend-ops-metallib-tensor PROPERTIES ENVIRONMENT GGML_METAL_TENSOR_ENABLE=1)
 endif()
 
+# Vulkan TBQ/PQ copy-to-quant subgroup-size sweep. Spawns itself with different
+# GGML_VK_TBQ_COPY_SG_SIZE values to exercise the shader's cross-subgroup stitch
+# path on hardware that only exposes one native subgroup size. Auto-skips when no
+# GPU backend is available.
+llama_build_and_test(test-copy-tbq-subgroups.cpp)
+
 llama_build_and_test(test-model-load-cancel.cpp LABEL "model")
 llama_build_and_test(test-model-load-disk.cpp   LABEL "model")
 llama_build_and_test(test-model-load-memory.cpp LABEL "model")
@@ -330,6 +336,7 @@ if (NOT GGML_BACKEND_DL)
     # these tests use the backends directly and cannot be built with dynamic loading
     llama_build_and_test(test-barrier.cpp)
     llama_build_and_test(test-quantize-fns.cpp)
+    target_include_directories(test-quantize-fns PRIVATE ${PROJECT_SOURCE_DIR}/ggml/src)
     llama_build_and_test(test-quantize-perf.cpp)
     llama_build_and_test(test-rope.cpp)
     llama_build_and_test(test-col2im-1d.cpp)
