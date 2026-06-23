@@ -353,7 +353,7 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="Print jobs without running")
     parser.add_argument("--rerun-missing", action="store_true",
                         help="Reuse latest output dir, skip jobs with existing CSV, run the rest")
-    parser.add_argument("--extra", nargs="*", default=[], help="Extra args for ruler-bench")
+    parser.add_argument("--extra", nargs=argparse.REMAINDER, default=[], help="Extra args for ruler-bench")
     args = parser.parse_args()
 
     preset = PRESETS[args.config]
