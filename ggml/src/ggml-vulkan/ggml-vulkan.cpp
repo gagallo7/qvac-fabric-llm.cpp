@@ -7962,10 +7962,6 @@ static vk_pipeline ggml_vk_get_to_fp16(ggml_backend_vk_context * ctx, ggml_type 
 static vk_matmul_pipeline ggml_vk_get_mul_mat_mat_pipeline(ggml_backend_vk_context * ctx, ggml_type src0_type, ggml_type src1_type, ggml_prec prec) {
     VK_LOG_DEBUG("ggml_vk_get_mul_mat_mat_pipeline(" << ggml_type_name(src0_type) << ", " << ggml_type_name(src1_type) << ", " << prec << ")");
     if (src0_type == GGML_TYPE_F32 && src1_type == GGML_TYPE_F32) {
-        if (ctx->device->coopmat_f32_support_16x16x16_f32acc) {
-            assert(ctx->device->coopmat_support);
-            return ctx->device->pipeline_matmul_f32_cm1;
-        }
         return ctx->device->pipeline_matmul_f32;
     }
     if (src0_type == GGML_TYPE_F32 && src1_type == GGML_TYPE_F16) {
