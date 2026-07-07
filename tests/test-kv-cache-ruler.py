@@ -27,6 +27,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
+from itertools import chain, repeat
 from pathlib import Path
 from typing import Optional
 
@@ -347,6 +348,7 @@ def main():
                         help="Config preset (default: small)")
     parser.add_argument("--gpus", default="0", help="Comma-separated GPU IDs (default: 0)")
     parser.add_argument("--models", nargs="*", help="Model paths to use (overrides defaults)")
+    parser.add_argument("--tokenizers", nargs="*", help="Tokenizer repos to use for each specified model (overrides defaults)")
     parser.add_argument("--output-dir", default="results", help="Directory for output files")
     parser.add_argument("--skip-v2", action="store_true", help="Skip v2 (hard) tasks")
     parser.add_argument("--skip-main", action="store_true", help="Skip main tasks")
@@ -376,15 +378,18 @@ def main():
     models = MODELS_DEFAULT
     if args.models:
         models = []
-        for p in args.models:
+        tokenizers = args.tokenizers if args.tokenizers else []
+        for p, t in zip(args.models, chain(tokenizers, repeat(None))):
             for m in MODELS_DEFAULT:
                 if m.path == p:
-                    models.append(m)
+                    m_updated = m.copy()
+                    m_updated.tokenizer = t if t else m.tokenizer
+                    models.append(m_updated)
                     break
             else:
                 models.append(ModelDef(
                     path=p,
-                    tokenizer="",  # will auto-detect
+                    tokenizer=t if t else "",
                     label=Path(p).stem,
                     family="custom",
                 ))
