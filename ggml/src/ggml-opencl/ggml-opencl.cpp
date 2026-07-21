@@ -592,6 +592,9 @@ struct ggml_opencl_fa_kernels {
     cl_kernel kernel_repack_v_for_wmm;
     cl_kernel kernel_repack_mask_for_wmm;
 #endif
+
+    // Guards the maps and argument state of their shared kernels.
+    std::mutex mutex;
 };
 
 #ifdef GGML_OPENCL_USE_ADRENO_KERNELS
@@ -1624,13 +1627,14 @@ static cl_program build_program_from_binary(cl_context ctx, cl_device_id dev, co
     return p;
 }
 
+static std::recursive_mutex s_kernel_compile_mutex;
+
 static void load_cl_kernels_argsort(ggml_backend_opencl_context *backend_ctx) {
     if (backend_ctx->kernels_loaded_argsort) {
         return;
     }
     // Serialize concurrent first-use kernel compilation (see load_cl_kernels).
-    static std::mutex s_argsort_mutex;
-    std::lock_guard<std::mutex> argsort_lock(s_argsort_mutex);
+    std::lock_guard<std::recursive_mutex> compile_lock(s_kernel_compile_mutex);
     if (backend_ctx->kernels_loaded_argsort) {
         return;
     }
@@ -1691,8 +1695,7 @@ static void load_cl_kernels(ggml_backend_opencl_context *backend_ctx) {
     }
 
     // Serialize first-time kernel compilation across threads.
-    static std::mutex s_load_kernels_mutex;
-    std::lock_guard<std::mutex> load_kernels_lock(s_load_kernels_mutex);
+    std::lock_guard<std::recursive_mutex> compile_lock(s_kernel_compile_mutex);
     if (backend_ctx->kernels_loaded) {
         return;
     }
@@ -5838,6 +5841,7 @@ static void ggml_opencl_log_fa_kernel_spill(ggml_backend_opencl_context * backen
 }
 
 static void ggml_opencl_ensure_fa_pre_kernels(ggml_backend_opencl_context * backend_ctx, int dk, int dv) {
+    std::lock_guard<std::recursive_mutex> compile_lock(s_kernel_compile_mutex);
     const std::pair<int, int> dk_dv = {dk, dv};
 
     const ggml_opencl_fa_dim * cfg = nullptr;
@@ -5884,6 +5888,7 @@ static void ggml_opencl_ensure_fa_pre_kernels(ggml_backend_opencl_context * back
 }
 
 static bool ggml_opencl_ensure_fa_f32_f16_vec_512(ggml_backend_opencl_context * backend_ctx) {
+    std::lock_guard<std::recursive_mutex> compile_lock(s_kernel_compile_mutex);
     const std::pair<int, int> key = {512, 512};
     auto & fa = backend_ctx->fa;
     if (fa.f32_f16_q1_vec.count(key) > 0) {
@@ -5943,6 +5948,7 @@ static bool ggml_opencl_ensure_fa_f32_f16_vec_512(ggml_backend_opencl_context * 
 }
 
 static void ggml_opencl_ensure_fa_f32_f16_mq_decode(ggml_backend_opencl_context * backend_ctx, int dk, int dv, int gqa) {
+    std::lock_guard<std::recursive_mutex> compile_lock(s_kernel_compile_mutex);
     const std::tuple<int, int, int> key = {dk, dv, gqa};
     auto & fa = backend_ctx->fa;
     if (fa.f32_f16_mq_decode.count(key) > 0 || fa.f32_f16_mq_decode_attempted.count(key) > 0 ||
@@ -6006,6 +6012,7 @@ static void ggml_opencl_ensure_fa_f32_f16_mq_decode(ggml_backend_opencl_context 
 
 // DK=512 prefill BM-tile
 static bool ggml_opencl_ensure_fa_f32_f16_prefill_512(ggml_backend_opencl_context * backend_ctx, bool split) {
+    std::lock_guard<std::recursive_mutex> compile_lock(s_kernel_compile_mutex);
     const int dk = 512, dv = 512;
     const std::pair<int, int> dk_dv = {dk, dv};
     auto & target = split ? backend_ctx->fa.f32_f16_split : backend_ctx->fa.f32_f16;
@@ -6068,6 +6075,7 @@ static bool ggml_opencl_ensure_fa_f32_f16_prefill_512(ggml_backend_opencl_contex
 
 // Compile one (variant, dk, dv); memoised. false = compiler rejected.
 static bool ggml_opencl_ensure_fa_variant(ggml_backend_opencl_context * backend_ctx, int dk, int dv, ggml_opencl_fa_variant variant) {
+    std::lock_guard<std::recursive_mutex> compile_lock(s_kernel_compile_mutex);
     const std::pair<int, int> dk_dv = {dk, dv};
 
     const ggml_opencl_fa_dim * cfg = nullptr;
@@ -6641,6 +6649,7 @@ static bool ggml_opencl_ensure_fa_quant_split_override(
         ggml_backend_opencl_context * backend_ctx,
         int dk, int dv, int quant_bm, int quant_n_split, bool is_q8_0
 ) {
+    std::lock_guard<std::recursive_mutex> compile_lock(s_kernel_compile_mutex);
     const std::pair<int, int> dk_dv = {dk, dv};
     if (is_q8_0 && backend_ctx->fa.f32_q8_0_split.count(dk_dv)) {
         return true;
@@ -9776,12 +9785,17 @@ static bool ggml_opencl_supports_op(ggml_backend_dev_t dev, const struct ggml_te
                     const char * decode_env = getenv("GGML_OPENCL_FA_DK512_DECODE");
                     if ((decode_env && decode_env[0] == '0') ||
                         backend_ctx->gpu_family != ADRENO || k->ne[2] <= 0 ||
-                        (q->ne[2] / k->ne[2] != 4 && q->ne[2] / k->ne[2] != 8) || q->ne[2] % k->ne[2] != 0 ||
-                        !ggml_opencl_ensure_fa_f32_f16_vec_512(backend_ctx)) {
+                        (q->ne[2] / k->ne[2] != 4 && q->ne[2] / k->ne[2] != 8) || q->ne[2] % k->ne[2] != 0) {
+                        return false;
+                    }
+                    // decode, vec + merge in their own FA_DECODE_ONLY program
+                    std::lock_guard<std::mutex> fa_lock(backend_ctx->fa.mutex);
+                    if (!ggml_opencl_ensure_fa_f32_f16_vec_512(backend_ctx)) {
                         return false;
                     }
                 } else {
                     // prefill, BM-tile in its own FA_PREFILL_ONLY program
+                    std::lock_guard<std::mutex> fa_lock(backend_ctx->fa.mutex);
                     if (!ggml_opencl_ensure_fa_f32_f16_prefill_512(backend_ctx, /*split=*/false)) {
                         return false;
                     }
@@ -18396,6 +18410,7 @@ static void ggml_cl_flash_attn(ggml_backend_t backend, const ggml_tensor * q, co
     }
 
     ggml_backend_opencl_context *backend_ctx = (ggml_backend_opencl_context *)backend->context;
+    std::lock_guard<std::mutex> fa_lock(backend_ctx->fa.mutex);
 
     const int n_q = q->ne[1];
     const int n_kv = k->ne[1];
