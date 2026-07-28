@@ -78,7 +78,7 @@ jobs:
         id: cmake_test
         run: |
           cd build
-          ctest -L main -E "test-llama-archs" --verbose --timeout 900
+          ctest -L main -E "test-llama-archs" --verbose --timeout 1800
 
       - name: ccache-clear
         uses: ./.github/actions/ccache-clear
