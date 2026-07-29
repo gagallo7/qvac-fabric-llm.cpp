@@ -21,6 +21,8 @@ from typing import Any, ClassVar
 
 import pandas as pd
 
+from qvac_bench_interface import MonitorClient, monitored_run, set_monitor
+
 REPO_ROOT: Path = Path(__file__).resolve().parent.parent
 WORKDIR: Path = REPO_ROOT / "bench-workdir"
 RESULTS_DIR: Path = WORKDIR / "results"
@@ -163,7 +165,7 @@ class RunContext:
         if model.options:
             self.options = self.options | model.options
         # Ignore options that don't affect the resuls of a run
-        for ignore in ("restart", "retry_failed", "rebuild", "num_jobs", "clean_unused"):
+        for ignore in ("restart", "retry_failed", "rebuild", "num_jobs", "clean_unused", "monitor", "monitor_interval", "monitor_gpu_source"):
             self.options.pop(ignore, None)
 
 class Benchmark(ABC):
@@ -323,6 +325,23 @@ def build_parser():
              "Files already present are reused; only missing ones are downloaded."
     )
     p.add_argument("--clean-unused", action="store_true")
+    p.add_argument(
+        "--no-monitor",
+        action="store_true",
+        help="Disable the CPU/GPU monitoring sidecar"
+    )
+    p.add_argument(
+        "--monitor-interval",
+        default=None,
+        type=float,
+        help="Monitoring sample interval in seconds"
+    )
+    p.add_argument(
+        "--monitor-gpu-source",
+        default="auto",
+        choices=["auto", "sysfs", "smi", "none"],
+        help="GPU telemetry source for the monitor: sysfs reads amdgpu hwmon/sysfs files directly (preferred), smi shells out to nvidia-smi/amd-smi/rocm-smi"
+    )
 
     return p
 
@@ -355,6 +374,10 @@ def apply_overrides(config, args):
     override["options"]["cooldown"] = args.cooldown
     override["options"]["warmup"] = args.warmup
     override["options"]["clean_unused"] = args.clean_unused
+    override["options"]["monitor"] = not args.no_monitor
+    if args.monitor_interval is not None:
+        override["options"]["monitor_interval"] = args.monitor_interval
+    override["options"]["monitor_gpu_source"] = args.monitor_gpu_source
 
     return deep_merge(config, override)
 
@@ -483,7 +506,7 @@ class LlamaBench(Benchmark):
         env["GGML_VK_VISIBLE_DEVICES"] = str(run_ctx.options["ggml_vk_visible_devices"])
 
         with outpath.open("w") as out, errpath.open("w") as err:
-            subprocess.run(
+            monitored_run(
                 [
                     run_ctx.worktree.binary_path(self.binaries[0]), "-m", str(model_path), "-ngl", str(run_ctx.options["ngl"]),
                     "-r", str(run_ctx.options["reps"]), "-fa", str(run_ctx.options["fa"]), "-o", "jsonl"
@@ -613,7 +636,7 @@ class LlamaFinetuneLora(Benchmark):
 
         with outpath.open("w") as out:
             start = time.perf_counter()
-            subprocess.run(
+            monitored_run(
                 [
                     run_ctx.worktree.binary_path(self.binaries[0]),
                     "-m", model_path,
@@ -773,7 +796,7 @@ class LlamaMtmdCli(Benchmark):
         def run_n_predict(n_predict, err):
             env = os.environ.copy()
             env["GGML_VK_VISIBLE_DEVICES"] = str(run_ctx.options["ggml_vk_visible_devices"])
-            subprocess.run(
+            monitored_run(
                 [
                     run_ctx.worktree.binary_path(self.binaries[0]),
                     "-m", model_path,
@@ -975,7 +998,7 @@ class Turboquant(Benchmark):
 
             bench_path = self.result_path(run_ctx, f".{bench}")
             with outpath.open("a") as out:
-                subprocess.run(
+                monitored_run(
                     ["bash", REPO_ROOT / "tests" / f"test-kv-cache-quantization-{bench}.sh", "--csv", bench_path] + run_ctx.options[f"{bench}_args"] + [run_ctx.worktree.build_path],
                     stdout=out,
                     stderr=subprocess.STDOUT,
@@ -998,7 +1021,7 @@ class Turboquant(Benchmark):
                 extra_args = ["--extra", "--server-bin", f"{run_ctx.worktree.binary_path('llama-server')}"]
 
             with outpath.open("a") as out:
-                subprocess.run(
+                monitored_run(
                     ["python3", REPO_ROOT / "tests" / f"test-kv-cache-{bench}.py", "--output-dir", bench_path,
                      "--models", model_path, "--gpus", str(run_ctx.options["ggml_vk_visible_devices"])] +
                      run_ctx.options[f"{bench}_args"] + extra_args,
@@ -1264,87 +1287,142 @@ def bench_driver(
 
     options = benchmark.default_options | options
 
-    log("driver", "downloading models for benchmark")
-    for model in models:
-        model.download()
+    sweep_monitor_path = RESULTS_DIR / f"{benchmark.name}-monitor.jsonl"
+    monitor = MonitorClient(options.get("monitor", True), options.get("monitor_interval", 5.0),
+                            options.get("monitor_gpu_source", "auto"))
+    set_monitor(monitor)
+    monitor.start(sweep_monitor_path, phase="setup",
+                  gpus=options.get("ggml_vk_visible_devices"))
 
-    log("driver", "preparing builds for benchmark")
-    builds_with_worktrees = []
-    for build in builds:
-        worktree = build.create_worktree()
-        worktree.build_binaries(benchmark.binaries, options["rebuild"], options["num_jobs"])
-        builds_with_worktrees.append((build, worktree))
-
-    if options["clean_unused"]:
-        for wt in WORKDIR.glob("wt/*"):
-            for build_dir in wt.glob("build-*"):
-                if build_dir.is_dir() and not any(build_dir == w.build_path for _, w in builds_with_worktrees):
-                    log("driver", f"removing unused build directory: {build_dir}")
-                    shutil.rmtree(build_dir)
-
-                if not any(b.is_dir() for b in wt.glob("build-*")):
-                    log("driver", f"removing unused worktree directory: {wt}")
-                    subprocess.run(["git", "-C", str(REPO_ROOT), "worktree", "remove", "--force", str(wt)], check=True)
-
-
-    for (build, worktree) in builds_with_worktrees:
+    try:
+        log("driver", "downloading models for benchmark")
         for model in models:
-            run_ctx = RunContext(worktree, model, options)
-            benchmark.download_assets(run_ctx.options)
+            model.download()
 
-            statuspath = benchmark.status_path(run_ctx)
+        monitor.phase("build")
 
-            if not options["restart"]:
-                status = get_status(statuspath)
-                if status == "success" and benchmark.verify_output(run_ctx):
-                    log(
-                        "driver",
-                        f"skipping {benchmark.name} on build {build.name} with model {model.file} (already successful, {statuspath.name})"
-                    )
-                    continue
-                elif status == "failure" and not options["retry_failed"]:
-                    log(
-                        "driver",
-                        f"skipping {benchmark.name} on build {build.name} with model {model.file} (previously failed, use --restart or --retry-failed, {statuspath.name})"
-                    )
-                    continue
+        log("driver", "preparing builds for benchmark")
+        builds_with_worktrees = []
+        for build in builds:
+            worktree = build.create_worktree()
+            worktree.build_binaries(benchmark.binaries, options["rebuild"], options["num_jobs"])
+            builds_with_worktrees.append((build, worktree))
 
-            log("driver", f"cleaning results for {benchmark.name} on build {build.name} with model {model.file}")
+        if options["clean_unused"]:
+            for wt in WORKDIR.glob("wt/*"):
+                for build_dir in wt.glob("build-*"):
+                    if build_dir.is_dir() and not any(build_dir == w.build_path for _, w in builds_with_worktrees):
+                        log("driver", f"removing unused build directory: {build_dir}")
+                        shutil.rmtree(build_dir)
 
-            benchmark.clean_results(run_ctx)
+                    if not any(b.is_dir() for b in wt.glob("build-*")):
+                        log("driver", f"removing unused worktree directory: {wt}")
+                        subprocess.run(["git", "-C", str(REPO_ROOT), "worktree", "remove", "--force", str(wt)], check=True)
 
-            status = {
-                "ref": worktree.sha,
-                "repo": build.repo,
-                "branch": build.branch,
-                "backend": build.backend,
-                "model": model.file,
-                "date": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                "options": run_ctx.options,
-                "gpus": allgpuinfo(),
-            }
+        monitor.phase("idle")
 
-            try:
-                if run_ctx.options["warmup"] > 0:
-                    log("driver", f"performing {run_ctx.options['warmup']} warmup runs for {benchmark.name} on build {build.name} with model {model.file}")
-                    for _ in range(run_ctx.options["warmup"]):
+        for (build, worktree) in builds_with_worktrees:
+            for model in models:
+                run_ctx = RunContext(worktree, model, options)
+                benchmark.download_assets(run_ctx.options)
+
+                statuspath = benchmark.status_path(run_ctx)
+
+                if not options["restart"]:
+                    status = get_status(statuspath)
+                    if status == "success" and benchmark.verify_output(run_ctx):
+                        log(
+                            "driver",
+                            f"skipping {benchmark.name} on build {build.name} with model {model.file} (already successful, {statuspath.name})"
+                        )
+                        continue
+                    elif status == "failure" and not options["retry_failed"]:
+                        log(
+                            "driver",
+                            f"skipping {benchmark.name} on build {build.name} with model {model.file} (previously failed, use --restart or --retry-failed, {statuspath.name})"
+                        )
+                        continue
+
+                log("driver", f"cleaning results for {benchmark.name} on build {build.name} with model {model.file}")
+
+                benchmark.clean_results(run_ctx)
+
+                phases: OptionsType = {}
+
+                def mark(label: str, _phases: OptionsType = phases) -> None:
+                    _phases[label] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+                status = {
+                    "ref": worktree.sha,
+                    "repo": build.repo,
+                    "branch": build.branch,
+                    "backend": build.backend,
+                    "model": model.file,
+                    "date": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    "options": run_ctx.options,
+                    "gpus": allgpuinfo(),
+                    "phases": phases,
+                }
+
+                # The per-run monitor file spans cooldown -> warmup -> run so it records
+                # the starting conditions, not just the run itself. The monitor spools
+                # samples outside the results dir, so clean_results() during warmup
+                # cannot delete the file while it is being written.
+                monitor_path = benchmark.result_path(run_ctx, ".monitor.jsonl")
+                events_path = benchmark.result_path(run_ctx, ".events.json")
+                if monitor.active:
+                    status["monitor"] = monitor_path.name
+                    status["events"] = events_path.name
+                monitor.rotate(monitor_path, run={
+                    "benchmark": benchmark.name,
+                    "build": build.name,
+                    "repo": build.repo,
+                    "branch": build.branch,
+                    "sha": worktree.sha,
+                    "backend": build.backend,
+                    "model": model.file,
+                    "result_stem": benchmark.result_path_stem(run_ctx).name,
+                }, phase="cooldown", events_path=events_path,
+                   gpus=run_ctx.options.get("ggml_vk_visible_devices"))
+                mark("cooldown")
+                if run_ctx.options["cooldown"] > 0:
+                    log("driver", f"cooling down {run_ctx.options['cooldown']}s before {benchmark.name} on build {build.name} with model {model.file}")
+                    time.sleep(run_ctx.options["cooldown"])
+
+                try:
+                    if run_ctx.options["warmup"] > 0:
+                        monitor.phase("warmup")
+                        mark("warmup")
+                        log("driver", f"performing {run_ctx.options['warmup']} warmup runs for {benchmark.name} on build {build.name} with model {model.file}")
+                        for _ in range(run_ctx.options["warmup"]):
+                            benchmark.run(run_ctx)
+                            benchmark.clean_results(run_ctx)
+
+                    monitor.phase("run")
+                    mark("run")
+                    log("driver", f"running {benchmark.name} on build {build.name} with model {model.file}")
+
+                    monitor.run_start()
+                    try:
                         benchmark.run(run_ctx)
-                        benchmark.clean_results(run_ctx)
+                    finally:
+                        monitor.run_end()
+                    if not benchmark.verify_output(run_ctx):
+                        raise ValueError(f"invalid benchmark output under {statuspath.stem}.*")
+                    status["status"] = "success"
+                except Exception as e:  # noqa: BLE001
+                    log("driver", f"{benchmark.name} on build {build.name} with model {model.file} failed: {e}")
+                    status["status"] = "failure"
+                mark("end")
 
-                log("driver", f"running {benchmark.name} on build {build.name} with model {model.file}")
+                with statuspath.open("w") as f:
+                    json.dump(status, f, indent=2)
 
-                benchmark.run(run_ctx)
-                if not benchmark.verify_output(run_ctx):
-                    raise ValueError(f"invalid benchmark output under {statuspath.stem}.*")
-                status["status"] = "success"
-            except Exception as e:  # noqa: BLE001
-                log("driver", f"{benchmark.name} on build {build.name} with model {model.file} failed: {e}")
-                status["status"] = "failure"
-
-            with statuspath.open("w") as f:
-                json.dump(status, f, indent=2)
-
-            time.sleep(run_ctx.options["cooldown"])
+                monitor.rotate(sweep_monitor_path, run=None, phase="idle",
+                               gpus=options.get("ggml_vk_visible_devices"))
+    finally:
+        monitor.stop()
+        set_monitor(None)
 
     dfs = []
     for (build, worktree) in builds_with_worktrees:
