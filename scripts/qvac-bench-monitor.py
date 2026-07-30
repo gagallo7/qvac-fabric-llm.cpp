@@ -872,6 +872,7 @@ class EventsOutput:
         self.run: dict[str, Any] | None = None
         self.run_start: dict[str, Any] | None = None
         self.run_end: dict[str, Any] | None = None
+        self.commands: list[dict[str, Any]] = []
         self.events: list[dict[str, Any]] = []
         self.active: dict[tuple[str, Any, str], dict[str, Any]] = {}
         self.seen_gpus: set[tuple[str, Any]] = set()
@@ -892,6 +893,11 @@ class EventsOutput:
                 self.run_start = value
         elif state == "end":
             self.run_end = value
+
+    def record_exec(self, record: dict[str, Any]) -> None:
+        if self.final_path is None:
+            return
+        self.commands.append({key: record[key] for key in ("ts", "t", "phase", "pid", "argv")})
 
     @staticmethod
     def _observation(stamp: dict[str, Any], phase: str) -> dict[str, Any]:
@@ -1003,12 +1009,14 @@ class EventsOutput:
                 "run_start": self.run_start,
                 "run_end": self.run_end,
                 "run_duration_s": duration,
+                "commands": self.commands,
                 "events": self.events,
             })
         self.final_path = None
         self.run = None
         self.run_start = None
         self.run_end = None
+        self.commands = []
         self.events = []
         self.active = {}
         self.seen_gpus = set()
@@ -1092,9 +1100,17 @@ class Monitor:
         elif name == "watch":
             pid = cmd.get("pid")
             try:
-                self.proc.watch(int(pid) if pid is not None else None)
+                pid = int(pid) if pid is not None else None
             except (TypeError, ValueError):
                 warn_once(f"ignoring invalid watch pid: {pid!r}")
+                return
+            self.proc.watch(pid)
+            argv = cmd.get("argv")
+            if pid is not None and isinstance(argv, list):
+                record = {"type": "exec", **timestamps(), "phase": self.phase,
+                          "pid": pid, "argv": [str(a) for a in argv]}
+                self.out.write(record)
+                self.events.record_exec(record)
         elif name == "run_start":
             self.events.mark_run("start", self._command_stamp(cmd))
         elif name == "run_end":
@@ -1169,6 +1185,12 @@ def main() -> None:
              "Default: all GPUs reported by the telemetry source",
     )
     parser.add_argument(
+        "--meta",
+        default=None,
+        help="JSON object with extra metadata merged into every segment's meta record "
+             "(e.g. the driver invocation and bench config)",
+    )
+    parser.add_argument(
         "--spool-dir",
         default="/dev/shm",
         help="Scratch directory for in-flight samples, appended to --output only when "
@@ -1188,12 +1210,23 @@ def main() -> None:
     spool_dir = args.spool_dir if args.spool_dir not in ("", "none") else None
     gpu_indices = parse_gpu_indices(args.gpus)
 
+    meta_extra: dict[str, Any] = {}
+    if args.meta:
+        try:
+            meta_extra = json.loads(args.meta)
+            if not isinstance(meta_extra, dict):
+                raise ValueError("not a JSON object")
+        except (json.JSONDecodeError, ValueError) as e:
+            log(f"ignoring invalid --meta: {e}")
+            meta_extra = {}
+
     out = JsonlOutput(args.output, {
         "host": socket.gethostname(),
         "platform": platform.platform(),
         "gpu_source": gpu.source if gpu is not None else None,
         "gpu_indices": None if gpu_indices is None else sorted(set(gpu_indices)),
         "interval": args.interval,
+        **meta_extra,
     }, spool_dir)
     monitor = Monitor(out, gpu, args.interval, args.phase, args.control_stdin, gpu_indices)
     signal.signal(signal.SIGTERM, monitor.stop)

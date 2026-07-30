@@ -1,4 +1,5 @@
 import argparse
+import copy
 import csv
 import datetime
 import hashlib
@@ -21,7 +22,7 @@ from typing import Any, ClassVar
 
 import pandas as pd
 
-from qvac_bench_interface import MonitorClient, monitored_run, set_monitor
+from qvac_bench_interface import MonitorClient, build_invocation, monitored_run, set_monitor, set_run_commands
 
 REPO_ROOT: Path = Path(__file__).resolve().parent.parent
 WORKDIR: Path = REPO_ROOT / "bench-workdir"
@@ -1279,6 +1280,7 @@ def bench_driver(
     builds: Sequence[Build],
     options: OptionsType,
     report_options: OptionsType,
+    invocation: "OptionsType | None" = None,
 ) -> None:
     WORKDIR.mkdir(exist_ok=True)
     RESULTS_DIR.mkdir(exist_ok=True)
@@ -1292,7 +1294,8 @@ def bench_driver(
                             options.get("monitor_gpu_source", "auto"))
     set_monitor(monitor)
     monitor.start(sweep_monitor_path, phase="setup",
-                  gpus=options.get("ggml_vk_visible_devices"))
+                  gpus=options.get("ggml_vk_visible_devices"),
+                  meta={"invocation": invocation} if invocation else None)
 
     try:
         log("driver", "downloading models for benchmark")
@@ -1352,6 +1355,10 @@ def bench_driver(
                 def mark(label: str, _phases: OptionsType = phases) -> None:
                     _phases[label] = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
+                # Filled in-place by monitored_run() with the argv of every
+                # command executed during the measured run (warmups excluded).
+                commands: list[list[str]] = []
+
                 status = {
                     "ref": worktree.sha,
                     "repo": build.repo,
@@ -1360,6 +1367,8 @@ def bench_driver(
                     "model": model.file,
                     "date": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                     "options": run_ctx.options,
+                    "invocation": invocation,
+                    "commands": commands,
                     "gpus": allgpuinfo(),
                     "phases": phases,
                 }
@@ -1403,9 +1412,11 @@ def bench_driver(
                     log("driver", f"running {benchmark.name} on build {build.name} with model {model.file}")
 
                     monitor.run_start()
+                    set_run_commands(commands)
                     try:
                         benchmark.run(run_ctx)
                     finally:
+                        set_run_commands(None)
                         monitor.run_end()
                     if not benchmark.verify_output(run_ctx):
                         raise ValueError(f"invalid benchmark output under {statuspath.stem}.*")
@@ -1442,11 +1453,12 @@ def main() -> None:
 
     if args.config:
         with open(args.config, "r", encoding="utf-8") as f:
-            config = json.load(f)
+            raw_config = json.load(f)
     else:
-        config = {}
+        raw_config = {}
 
-    config = apply_overrides(config, args)
+    config = apply_overrides(copy.deepcopy(raw_config), args)
+    invocation = build_invocation(args, raw_config, config)
 
     if args.models_dir:
         global MODELS_DIR
@@ -1475,6 +1487,7 @@ def main() -> None:
         builds,
         config.get("options", {}),
         config.get("report_options", {}),
+        invocation,
     )
 
 

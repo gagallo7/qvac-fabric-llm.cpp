@@ -1,7 +1,8 @@
 """Interface between qvac-bench.py and the qvac-bench-monitor.py sidecar.
 
-Hosts the sidecar client and the monitored subprocess runner so the bench
-driver only deals with benchmark logic.
+Hosts the sidecar client, the monitored subprocess runner and the capture of
+run metadata (driver invocation, executed command lines) so the bench driver
+only deals with benchmark logic.
 """
 
 import datetime
@@ -9,6 +10,7 @@ import json
 import logging
 import subprocess
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -49,7 +51,7 @@ class MonitorClient:
             return []
         return ["--gpus", text]
 
-    def start(self, path: Path, phase: str, gpus: Any = None) -> None:
+    def start(self, path: Path, phase: str, gpus: Any = None, meta: "OptionsType | None" = None) -> None:
         if not self.enabled:
             return
         try:
@@ -58,6 +60,7 @@ class MonitorClient:
                  "--output", str(path), "--interval", str(self.interval),
                  "--gpu-source", self.gpu_source,
                  *self._gpus_cli(gpus),
+                 *(["--meta", json.dumps(meta)] if meta else []),
                  "--control-stdin", "--phase", phase],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
@@ -89,9 +92,12 @@ class MonitorClient:
     def run_end(self) -> None:
         self._send_timed("run_end")
 
-    def watch(self, pid: int | None) -> None:
+    def watch(self, pid: int | None, argv: "Sequence[str] | None" = None) -> None:
         """Point the monitor's per-process (pidstat-style) sampling at pid."""
-        self._send({"cmd": "watch", "pid": pid})
+        payload: OptionsType = {"cmd": "watch", "pid": pid}
+        if pid is not None and argv is not None:
+            payload["argv"] = list(argv)
+        self._send(payload)
 
     def _send_timed(self, command: str) -> None:
         now = datetime.datetime.now(datetime.timezone.utc)
@@ -135,6 +141,7 @@ class MonitorClient:
 
 
 MONITOR: "MonitorClient | None" = None
+RUN_COMMANDS: "list[list[str]] | None" = None
 
 
 def set_monitor(monitor: "MonitorClient | None") -> None:
@@ -143,13 +150,34 @@ def set_monitor(monitor: "MonitorClient | None") -> None:
     MONITOR = monitor
 
 
+def set_run_commands(commands: "list[list[str]] | None") -> None:
+    """Set the list monitored_run() appends each executed argv to (None disables)."""
+    global RUN_COMMANDS
+    RUN_COMMANDS = commands
+
+
+def build_invocation(args, raw_config: "OptionsType | None", config: OptionsType) -> OptionsType:
+    """Describe how the driver was invoked: python argv, config file path and
+    contents, and the merged effective config."""
+    return {
+        "argv": sys.argv,
+        "config_path": args.config,
+        "raw_config": raw_config if args.config else None,
+        "config": config,
+    }
+
+
 def monitored_run(args, **kwargs) -> subprocess.CompletedProcess:
-    """subprocess.run(check=True) replacement that reports the child PID to the
-    monitor sidecar so it can sample per-process (pidstat-style) statistics."""
+    """subprocess.run(check=True) replacement that reports the child PID and
+    command line to the monitor sidecar so it can sample per-process
+    (pidstat-style) statistics and log what was executed."""
     check = kwargs.pop("check", False)
+    argv = [str(a) for a in args]
+    if RUN_COMMANDS is not None:
+        RUN_COMMANDS.append(argv)
     with subprocess.Popen(args, **kwargs) as proc:
         if MONITOR is not None:
-            MONITOR.watch(proc.pid)
+            MONITOR.watch(proc.pid, argv)
         try:
             returncode = proc.wait()
         except BaseException:

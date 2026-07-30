@@ -125,6 +125,52 @@ def test_monitor_filters_gpus_by_indices(tmp_path, monkeypatch):
     assert [gpu["index"] for gpu in run_sample["gpus"]] == [0, 2]
 
 
+def test_watch_command_logs_exec_record_and_events_commands(tmp_path, monkeypatch):
+    output_path = tmp_path / "run.jsonl"
+    events_path = tmp_path / "run.events.json"
+    out = qbm.JsonlOutput(
+        str(output_path),
+        {"host": "test-host", "gpu_source": None, "interval": 1.0},
+        str(tmp_path),
+    )
+    monitor = qbm.Monitor(out, None, interval=1.0, phase="idle", control=False)
+    monkeypatch.setattr(monitor.cpu, "sample", lambda: {"util_pct": 0.0})
+    monkeypatch.setattr(qbm, "sample_pressure", lambda: None)
+    monkeypatch.setattr(monitor.proc, "sample", lambda: None)
+
+    monitor._handle_command(json.dumps({
+        "cmd": "rotate",
+        "path": str(output_path),
+        "events_path": str(events_path),
+        "phase": "run",
+        "run": {"benchmark": "llama-bench"},
+    }))
+    argv = ["llama-bench", "-m", "test.gguf", "-ngl", "99", "-o", "jsonl"]
+    monitor._handle_command(json.dumps({"cmd": "watch", "pid": 4242, "argv": argv}))
+    assert monitor.proc.pid == 4242
+    monitor._handle_command(json.dumps({"cmd": "watch", "pid": None}))
+    assert monitor.proc.pid is None
+    monitor._handle_command(json.dumps({"cmd": "watch", "pid": "bogus", "argv": argv}))
+    monitor.events.close()
+    out.close()
+
+    records = read_jsonl(output_path)
+    execs = [record for record in records if record["type"] == "exec"]
+    assert len(execs) == 1
+    assert execs[0]["phase"] == "run"
+    assert execs[0]["pid"] == 4242
+    assert execs[0]["argv"] == argv
+
+    with events_path.open() as f:
+        payload = json.load(f)
+    assert len(payload["commands"]) == 1
+    command = payload["commands"][0]
+    assert command["pid"] == 4242
+    assert command["phase"] == "run"
+    assert command["argv"] == argv
+    assert payload["events"] == []
+
+
 def test_monitor_client_passes_gpus_cli(tmp_path, monkeypatch):
     seen = {}
 
@@ -152,9 +198,13 @@ def test_monitor_client_passes_gpus_cli(tmp_path, monkeypatch):
 
     monkeypatch.setattr(qbi.subprocess, "Popen", FakePopen)
     monitor = qbi.MonitorClient(enabled=True, interval=0.5, gpu_source="none")
-    monitor.start(tmp_path / "sweep.jsonl", phase="setup", gpus=0)
+    meta = {"invocation": {"argv": ["qvac-bench.py", "--config", "cfg.json"],
+                           "config": {"benchmark": "llama-bench"}}}
+    monitor.start(tmp_path / "sweep.jsonl", phase="setup", gpus=0, meta=meta)
     assert "--gpus" in seen["args"]
     assert seen["args"][seen["args"].index("--gpus") + 1] == "0"
+    assert "--meta" in seen["args"]
+    assert json.loads(seen["args"][seen["args"].index("--meta") + 1]) == meta
 
     sent = []
     monitor.proc.stdin = type("Stdin", (), {
@@ -396,15 +446,19 @@ def test_monitor_client_and_sidecar_exchange_commands(tmp_path):
         "backend": "vulkan",
         "model": "test.gguf",
     }
+    invocation = {"argv": ["scripts/qvac-bench.py", "--config", "bench.json"],
+                  "config": {"benchmark": "llama-bench"}}
     monitor = qbi.MonitorClient(enabled=True, interval=0.02, gpu_source="none")
 
-    monitor.start(sweep_path, phase="setup")
+    monitor.start(sweep_path, phase="setup", meta={"invocation": invocation})
     assert monitor.active
     try:
         monitor.rotate(run_path, run, phase="cooldown", events_path=events_path)
         monitor.phase("run")
         monitor.run_start()
+        commands = []
         qbi.set_monitor(monitor)
+        qbi.set_run_commands(commands)
         try:
             result = qbi.monitored_run(
                 [sys.executable, "-c", "import time; time.sleep(0.25)"],
@@ -414,11 +468,13 @@ def test_monitor_client_and_sidecar_exchange_commands(tmp_path):
             )
         finally:
             qbi.set_monitor(None)
+            qbi.set_run_commands(None)
             monitor.run_end()
     finally:
         monitor.stop()
 
     assert result.returncode == 0
+    assert commands == [[sys.executable, "-c", "import time; time.sleep(0.25)"]]
     sweep_records = read_jsonl(sweep_path)
     run_records = read_jsonl(run_path)
     with events_path.open() as f:
@@ -426,6 +482,7 @@ def test_monitor_client_and_sidecar_exchange_commands(tmp_path):
 
     assert sweep_records[0]["type"] == "meta"
     assert sweep_records[0]["run"] is None
+    assert sweep_records[0]["invocation"] == invocation
     assert any(
         record["type"] == "phase"
         and record["phase"] == "setup"
@@ -437,6 +494,7 @@ def test_monitor_client_and_sidecar_exchange_commands(tmp_path):
     assert run_records[0]["run"] == run
     assert run_records[0]["gpu_source"] is None
     assert run_records[0]["interval"] == 0.02
+    assert run_records[0]["invocation"] == invocation
     assert any(
         record["type"] == "phase"
         and record["phase"] == "cooldown"
@@ -464,10 +522,16 @@ def test_monitor_client_and_sidecar_exchange_commands(tmp_path):
         "mem_available_kib",
         "temps_c",
     } <= samples[0]["cpu"].keys()
+    execs = [record for record in run_records if record["type"] == "exec"]
+    assert len(execs) == 1
+    assert execs[0]["phase"] == "run"
+    assert execs[0]["argv"][0] == sys.executable
+
     assert event_data["version"] == 1
     assert event_data["run"] == run
     assert event_data["run_start"]["t"] <= event_data["run_end"]["t"]
     assert event_data["run_duration_s"] > 0
+    assert [command["argv"] for command in event_data["commands"]] == [execs[0]["argv"]]
     assert event_data["events"] == []
 
 
