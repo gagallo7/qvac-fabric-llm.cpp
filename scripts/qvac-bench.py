@@ -1,9 +1,3 @@
-from abc import ABC, abstractmethod
-from itertools import product
-from functools import cache
-from pathlib import Path
-from socket import gethostname
-from typing import Any, Sequence
 import argparse
 import csv
 import datetime
@@ -12,12 +6,20 @@ import json
 import logging
 import math
 import os
-import pandas as pd
 import re
 import shutil
 import subprocess
 import sys
 import time
+from abc import ABC, abstractmethod
+from collections.abc import Sequence
+from functools import cache
+from itertools import product
+from pathlib import Path
+from socket import gethostname
+from typing import Any, ClassVar
+
+import pandas as pd
 
 REPO_ROOT: Path = Path(__file__).resolve().parent.parent
 WORKDIR: Path = REPO_ROOT / "bench-workdir"
@@ -26,11 +28,12 @@ MODELS_DIR: Path = WORKDIR / "models"
 IMAGES_DIR: Path = WORKDIR / "images"
 
 logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(message)s")
+logger = logging.getLogger(__name__)
 
 OptionsType = dict[str, Any]
 
 class Worktree:
-    backend_defines: dict[str, list[str]] = {
+    backend_defines: ClassVar[dict[str, list[str]]] = {
         "vulkan": ["-DGGML_VULKAN=ON"],
         "opencl": ["-DGGML_OPENCL=ON"],
         "cuda": ["-DGGML_CUDA=ON"],
@@ -66,7 +69,7 @@ class Worktree:
 
         if rebuild or not self.build_path.is_dir():
             shutil.rmtree(self.build_path, ignore_errors=True)
-            log(self.name, f"cmake configure")
+            log(self.name, "cmake configure")
             with (RESULTS_DIR / f"{self.sha}-{self.backend}-cmake.log").open("w") as logfile:
                 subprocess.run(
                     [
@@ -83,7 +86,7 @@ class Worktree:
         else:
             log(self.name, f"partially reusing existing build: {self.build_path}, building only missing binaries: {' '.join(missing_binaries)} (pass --rebuild to force)")
 
-        log(self.name, f"cmake build")
+        log(self.name, "cmake build")
         with (RESULTS_DIR / f"{self.sha}-{self.backend}-build.log").open("w") as logfile:
             subprocess.run(
                 ["cmake", "--build", self.build_path, "-j", str(num_jobs), "--target"] + missing_binaries,
@@ -219,7 +222,7 @@ class NoModel(Model):
 
 
 def log(label: str, msg: str) -> None:
-    logging.info(f"[{label}] {msg}")
+    logger.info("[%s] %s", label, msg)
 
 
 def git(args: Sequence[str | Path], **kwargs):
@@ -360,7 +363,7 @@ def apply_overrides(config, args):
 def allvulkaninfo() -> list[str]:
     try:
         vi = subprocess.run(["vulkaninfo", "--summary"], capture_output=True, text=True, check=True).stdout.strip()
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         return ["vulkaninfo unavailable or failed"]
 
     try:
@@ -384,7 +387,7 @@ def allvulkaninfo() -> list[str]:
 
         return [f"{device.get('deviceName', 'Unknown')} - {device.get('driverName', 'Unknown')} {device.get('driverInfo', 'Unknown')}" for device in devices]
 
-    except Exception:
+    except (KeyError, TypeError, ValueError, AttributeError):
         return ["vulkaninfo summary parsing failed"]
 
 
@@ -453,6 +456,7 @@ def get_status(statuspath) -> str | None:
             return j.get("status", None)
     except FileNotFoundError:
         return None
+
 
 class LlamaBench(Benchmark):
     def __init__(self) -> None:
@@ -534,7 +538,7 @@ class LlamaBench(Benchmark):
         lines = []
         lines.append(f"# Vulkan benchmark: {', '.join(f'`{worktree.name}`' for worktree in worktrees)}")
         lines.append("")
-        lines.append(f"- **Date**: {datetime.datetime.now().isoformat()}")
+        lines.append(f"- **Date**: {datetime.datetime.now(datetime.timezone.utc).isoformat()}")
         lines.append(f"- **Host**: {gethostname()}")
         for i, api, gpu in gpuinfo(worktrees, models, options):
             lines.append(f"- **GPU{i} ({api})**: {gpu}")
@@ -671,7 +675,7 @@ class LlamaFinetuneLora(Benchmark):
         lines = []
         lines.append(f"# LoRA finetune regression: {', '.join(f'`{worktree.name}`' for worktree in worktrees)}")
         lines.append("")
-        lines.append(f"- **Date**: {datetime.datetime.now().isoformat()}")
+        lines.append(f"- **Date**: {datetime.datetime.now(datetime.timezone.utc).isoformat()}")
         lines.append(f"- **Host**: {gethostname()}")
         for i, api, gpu in gpuinfo(worktrees, models, options):
             lines.append(f"- **GPU{i} ({api})**: {gpu}")
@@ -821,7 +825,7 @@ class LlamaMtmdCli(Benchmark):
                 if not all(k in row for k in ("n_predict", "t0_wall_t", "tN_wall_t")):
                     return False
             return True
-        except Exception:
+        except (OSError, json.JSONDecodeError, ValueError, TypeError):
             return False
 
     def get_results(self, run_ctx: RunContext) -> pd.DataFrame:
@@ -855,7 +859,7 @@ class LlamaMtmdCli(Benchmark):
         lines = []
         lines.append(f"# Vulkan multimodal benchmark: {', '.join(f'`{wt.name}`' for wt in worktrees)}")
         lines.append("")
-        lines.append(f"- **Date**: {datetime.datetime.now().isoformat()}")
+        lines.append(f"- **Date**: {datetime.datetime.now(datetime.timezone.utc).isoformat()}")
         lines.append(f"- **Host**: {gethostname()}")
         for i, api, gpu in gpuinfo(worktrees, models, options):
             lines.append(f"- **GPU{i} ({api})**: {gpu}")
@@ -946,8 +950,8 @@ class Turboquant(Benchmark):
             try:
                 with csv_path.open(newline="", encoding="utf-8") as f:
                     return list(csv.DictReader(f))
-            except Exception:
-                pass
+            except (OSError, csv.Error, UnicodeDecodeError, ValueError) as e:
+                log("turboquant", f"failed to load eval csv {csv_path}: {e}")
 
         return []
 
@@ -1014,7 +1018,7 @@ class Turboquant(Benchmark):
                         if "model" not in row or "pp_vs_f16_x" not in row or "tg_vs_f16_x" not in row:
                             return False
                 return True
-            except:
+            except (OSError, csv.Error, UnicodeDecodeError, ValueError, KeyError):
                 return False
 
         if "perp" in run_ctx.options["benchmarks"]:
@@ -1026,7 +1030,7 @@ class Turboquant(Benchmark):
                         if "model" not in row or "bpw_avg" not in row or "ppl_mean" not in row:
                             return False
                 return True
-            except:
+            except (OSError, csv.Error, UnicodeDecodeError, ValueError, KeyError):
                 return False
 
         return True
@@ -1106,11 +1110,11 @@ class Turboquant(Benchmark):
                         cells.append(f"{values.get(reference, float('nan')):.2f}")
                     else:
                         if reference in values and not math.isnan(values[reference]):
-                            def delta_pct(v):
-                                return (v - values[reference]) / values[reference] * 100.0
+                            def delta_pct(v, _values=values, _ref=reference):
+                                return (v - _values[_ref]) / _values[_ref] * 100.0
                             cells.append(f"{delta_pct(val):+.2f}%" + (f" (α: {delta_pct(val_nc):+.2f}%)" if not math.isnan(val_nc) else ""))
                         else:
-                            cells.append(f"-")
+                            cells.append("-")
 
                 lines.append("| " + " | ".join(cells) + " |")
 
@@ -1171,7 +1175,7 @@ class Turboquant(Benchmark):
                 lines.append("| " + " | ".join(col_headers) + " |")
                 lines.append("| :---- | ----: |" + " ----: |" * len(active_benches))
 
-                values: dict[str, dict[tuple[str, str], "float | None"]] = {}
+                values: dict[str, dict[tuple[str, str], float | None]] = {}
                 for bench in active_benches:
                     col = score_col[bench]
                     bench_rows = df[(df["benchmark"] == bench) & (df["model"] == model.name) & (df["worktree"] == worktree.name)]
@@ -1260,11 +1264,11 @@ def bench_driver(
 
     options = benchmark.default_options | options
 
-    log("driver", f"downloading models for benchmark")
+    log("driver", "downloading models for benchmark")
     for model in models:
         model.download()
 
-    log("driver", f"preparing builds for benchmark")
+    log("driver", "preparing builds for benchmark")
     builds_with_worktrees = []
     for build in builds:
         worktree = build.create_worktree()
@@ -1278,7 +1282,7 @@ def bench_driver(
                     log("driver", f"removing unused build directory: {build_dir}")
                     shutil.rmtree(build_dir)
 
-                if not any([b.is_dir() for b in wt.glob("build-*")]):
+                if not any(b.is_dir() for b in wt.glob("build-*")):
                     log("driver", f"removing unused worktree directory: {wt}")
                     subprocess.run(["git", "-C", str(REPO_ROOT), "worktree", "remove", "--force", str(wt)], check=True)
 
@@ -1315,7 +1319,7 @@ def bench_driver(
                 "branch": build.branch,
                 "backend": build.backend,
                 "model": model.file,
-                "date": datetime.datetime.now().isoformat(),
+                "date": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "options": run_ctx.options,
                 "gpus": allgpuinfo(),
             }
@@ -1333,7 +1337,7 @@ def bench_driver(
                 if not benchmark.verify_output(run_ctx):
                     raise ValueError(f"invalid benchmark output under {statuspath.stem}.*")
                 status["status"] = "success"
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 log("driver", f"{benchmark.name} on build {build.name} with model {model.file} failed: {e}")
                 status["status"] = "failure"
 
