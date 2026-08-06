@@ -1661,6 +1661,10 @@ def bench_driver(
     except DbPreflightError as e:
         sys.exit(f"db: {e}")
 
+    log("driver", "downloading models for benchmark")
+    for model in models:
+        model.download()
+
     sweep_monitor_path = RESULTS_DIR / f"{benchmark.name}-monitor.jsonl"
     monitor = MonitorClient(
         options.get("monitor", True),
@@ -1670,18 +1674,12 @@ def bench_driver(
     set_monitor(monitor)
     monitor.start(
         sweep_monitor_path,
-        phase="setup",
+        phase="build",
         gpus=options.get("ggml_vk_visible_devices"),
         meta={"invocation": invocation} if invocation else None,
     )
 
     try:
-        log("driver", "downloading models for benchmark")
-        for model in models:
-            model.download()
-
-        monitor.phase("build")
-
         log("driver", "preparing builds for benchmark")
         builds_with_worktrees = []
         for build in builds:

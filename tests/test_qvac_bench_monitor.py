@@ -245,6 +245,45 @@ def test_monitor_interval_config_is_preserved_without_cli_override():
     assert result["options"]["monitor_interval"] == 0.5
 
 
+def test_driver_downloads_models_before_starting_monitor(tmp_path, monkeypatch):
+    events = []
+
+    class FakeModel:
+        def download(self):
+            events.append("download")
+
+    class FakeMonitor:
+        active = False
+
+        def __init__(self, _enabled, _interval, _gpu_source):
+            pass
+
+        def start(self, _path, phase, **_kwargs):
+            events.append(("start", phase))
+
+        def phase(self, label):
+            events.append(("phase", label))
+
+        def stop(self):
+            events.append("stop")
+
+    for name in ("WORKDIR", "RESULTS_DIR", "MODELS_DIR", "IMAGES_DIR"):
+        monkeypatch.setattr(qb, name, tmp_path / name.lower())
+    monkeypatch.setattr(qb, "MonitorClient", FakeMonitor)
+
+    benchmark = next(b for b in qb.benchmarks if b.name == "llama-bench")
+    monkeypatch.setattr(benchmark, "create_report", lambda *_args: None)
+
+    qb.bench_driver(benchmark, [FakeModel()], [], {"clean_unused": False}, {})
+
+    assert events == [
+        "download",
+        ("start", "build"),
+        ("phase", "idle"),
+        "stop",
+    ]
+
+
 def test_jsonl_output_spools_and_rotates_segments(tmp_path):
     spool_dir = tmp_path / "spool"
     spool_dir.mkdir()
