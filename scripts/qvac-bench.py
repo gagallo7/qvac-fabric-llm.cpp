@@ -22,7 +22,13 @@ from typing import Any, ClassVar
 
 import pandas as pd
 
-from qvac_bench_interface import MonitorClient, build_invocation, monitored_run, set_monitor, set_run_commands
+from qvac_bench_interface import (
+    MonitorClient,
+    build_invocation,
+    monitored_run,
+    set_monitor,
+    set_run_commands,
+)
 
 REPO_ROOT: Path = Path(__file__).resolve().parent.parent
 WORKDIR: Path = REPO_ROOT / "bench-workdir"
@@ -35,16 +41,17 @@ logger = logging.getLogger(__name__)
 
 OptionsType = dict[str, Any]
 
+
 class Worktree:
     backend_defines: ClassVar[dict[str, list[str]]] = {
         "vulkan": ["-DGGML_VULKAN=ON"],
         "opencl": ["-DGGML_OPENCL=ON"],
         "cuda": ["-DGGML_CUDA=ON"],
         "metal": ["-DGGML_METAL=ON"],
-        "default": []
+        "default": [],
     }
 
-    def __init__(self, build: 'Build', sha: str) -> None:
+    def __init__(self, build: "Build", sha: str) -> None:
         self.build = build
         self.name = build.name
         self.backend = build.backend
@@ -57,54 +64,89 @@ class Worktree:
 
     def create(self) -> None:
         git(["worktree", "add", "--detach", str(self.path), self.sha])
-        wt_sha = git(["-C", str(self.path), "rev-parse", "HEAD"], capture_output=True).stdout.strip().decode()
+        wt_sha = (
+            git(["-C", str(self.path), "rev-parse", "HEAD"], capture_output=True)
+            .stdout.strip()
+            .decode()
+        )
         if wt_sha != self.sha:
-            raise RuntimeError(f"worktree {self.path} is at {wt_sha}, expected {self.sha}")
+            raise RuntimeError(
+                f"worktree {self.path} is at {wt_sha}, expected {self.sha}"
+            )
 
     def binary_path(self, name: str) -> Path:
         return self.build_path / "bin" / name
 
-    def build_binaries(self, binaries: Sequence[str], rebuild: bool, num_jobs: int) -> None:
-        missing_binaries = [binary for binary in binaries if not self.binary_path(binary).is_file()]
+    def build_binaries(
+        self, binaries: Sequence[str], rebuild: bool, num_jobs: int
+    ) -> None:
+        missing_binaries = [
+            binary for binary in binaries if not self.binary_path(binary).is_file()
+        ]
         if not rebuild and not missing_binaries:
-            log(self.name, f"reusing existing build: {self.build_path} (pass --rebuild to force)")
+            log(
+                self.name,
+                f"reusing existing build: {self.build_path} (pass --rebuild to force)",
+            )
             return
 
         if rebuild or not self.build_path.is_dir():
             shutil.rmtree(self.build_path, ignore_errors=True)
             log(self.name, "cmake configure")
-            with (RESULTS_DIR / f"{self.sha}-{self.backend}-cmake.log").open("w") as logfile:
+            with (RESULTS_DIR / f"{self.sha}-{self.backend}-cmake.log").open(
+                "w"
+            ) as logfile:
                 subprocess.run(
                     [
-                        "cmake", "-S", self.path, "-B", self.build_path,
+                        "cmake",
+                        "-S",
+                        self.path,
+                        "-B",
+                        self.build_path,
                         "-DCMAKE_BUILD_TYPE=Release",
                         "-DLLAMA_CURL=OFF",
                         "-DLLAMA_BUILD_TESTS=ON",
                         "-DLLAMA_BUILD_EXAMPLES=ON",
                         "-DLLAMA_BUILD_SERVER=ON",
-                        "-DLLAMA_BUILD_TOOLS=ON"
-                    ] + self.backend_defines[self.backend],
-                    stdout=logfile, stderr=subprocess.STDOUT, check=True)
+                        "-DLLAMA_BUILD_TOOLS=ON",
+                    ]
+                    + self.backend_defines[self.backend],
+                    stdout=logfile,
+                    stderr=subprocess.STDOUT,
+                    check=True,
+                )
             missing_binaries = list(binaries)
         else:
-            log(self.name, f"partially reusing existing build: {self.build_path}, building only missing binaries: {' '.join(missing_binaries)} (pass --rebuild to force)")
-
-        log(self.name, "cmake build")
-        with (RESULTS_DIR / f"{self.sha}-{self.backend}-build.log").open("w") as logfile:
-            subprocess.run(
-                ["cmake", "--build", self.build_path, "-j", str(num_jobs), "--target"] + missing_binaries,
-                stdout=logfile,
-                stderr=subprocess.STDOUT,
-                check=True
+            log(
+                self.name,
+                f"partially reusing existing build: {self.build_path}, building only missing binaries: {' '.join(missing_binaries)} (pass --rebuild to force)",
             )
 
-        still_missing_binaries = [binary for binary in binaries if not self.binary_path(binary).is_file()]
+        log(self.name, "cmake build")
+        with (RESULTS_DIR / f"{self.sha}-{self.backend}-build.log").open(
+            "w"
+        ) as logfile:
+            subprocess.run(
+                ["cmake", "--build", self.build_path, "-j", str(num_jobs), "--target"]
+                + missing_binaries,
+                stdout=logfile,
+                stderr=subprocess.STDOUT,
+                check=True,
+            )
+
+        still_missing_binaries = [
+            binary for binary in binaries if not self.binary_path(binary).is_file()
+        ]
         if still_missing_binaries:
-            raise RuntimeError(f"build failed, {' '.join(still_missing_binaries)} not found")
+            raise RuntimeError(
+                f"build failed, {' '.join(still_missing_binaries)} not found"
+            )
 
 
 class Build:
-    def __init__(self, repo: str, branch: str, backend: str, name: str | None = None) -> None:
+    def __init__(
+        self, repo: str, branch: str, backend: str, name: str | None = None
+    ) -> None:
         self.repo = repo
         self.branch = branch
         self.name = name or f"{branch}-{backend}"
@@ -124,7 +166,14 @@ class Build:
 
 
 class Model:
-    def __init__(self, hf_repo: str, file: str, mmproj: str | None = None, tokenizer: str | None = None, options: OptionsType | None = None) -> None:
+    def __init__(
+        self,
+        hf_repo: str,
+        file: str,
+        mmproj: str | None = None,
+        tokenizer: str | None = None,
+        options: OptionsType | None = None,
+    ) -> None:
         self.hf_repo = hf_repo
         self.file = file
         self.mmproj = mmproj
@@ -144,11 +193,15 @@ class Model:
         log(name, f"downloading from {self.hf_repo}")
         subprocess.run(
             [
-                f"{REPO_ROOT}/scripts/hf.sh", "--repo", self.hf_repo, "--file",
-                file, "--outdir",
-                str(MODELS_DIR)
+                f"{REPO_ROOT}/scripts/hf.sh",
+                "--repo",
+                self.hf_repo,
+                "--file",
+                file,
+                "--outdir",
+                str(MODELS_DIR),
             ],
-            check=True
+            check=True,
         )
         if not target.is_file():
             raise RuntimeError(f"downloaded file not at expected path: {target}")
@@ -158,6 +211,7 @@ class Model:
         if self.mmproj:
             self._download_file(self.mmproj)
 
+
 class RunContext:
     def __init__(self, worktree: Worktree, model: Model, options: OptionsType) -> None:
         self.worktree = worktree
@@ -166,11 +220,23 @@ class RunContext:
         if model.options:
             self.options = self.options | model.options
         # Ignore options that don't affect the resuls of a run
-        for ignore in ("restart", "retry_failed", "rebuild", "num_jobs", "clean_unused", "monitor", "monitor_interval", "monitor_gpu_source"):
+        for ignore in (
+            "restart",
+            "retry_failed",
+            "rebuild",
+            "num_jobs",
+            "clean_unused",
+            "monitor",
+            "monitor_interval",
+            "monitor_gpu_source",
+        ):
             self.options.pop(ignore, None)
 
+
 class Benchmark(ABC):
-    def __init__(self, name: str, binaries: Sequence[str], default_options: OptionsType) -> None:
+    def __init__(
+        self, name: str, binaries: Sequence[str], default_options: OptionsType
+    ) -> None:
         self.name = name
         self.binaries = binaries
         self.default_options = default_options
@@ -178,7 +244,10 @@ class Benchmark(ABC):
     def result_path_stem(self, run_ctx: RunContext) -> Path:
         options_str = json.dumps(run_ctx.options, sort_keys=True)
         options_sha = hashlib.sha256(options_str.encode()).hexdigest()[:10]
-        return RESULTS_DIR / f"{self.name}-{run_ctx.worktree.sha}-{run_ctx.worktree.backend}-{run_ctx.model.file}-{options_sha}"
+        return (
+            RESULTS_DIR
+            / f"{self.name}-{run_ctx.worktree.sha}-{run_ctx.worktree.backend}-{run_ctx.model.file}-{options_sha}"
+        )
 
     def result_path(self, run_ctx: RunContext, suffix: str) -> Path:
         stem = self.result_path_stem(run_ctx)
@@ -211,9 +280,15 @@ class Benchmark(ABC):
         pass
 
     @abstractmethod
-    def create_report(self, worktrees: Sequence[Worktree], models: Sequence[Model], options: OptionsType, report_options: OptionsType, df: pd.DataFrame) -> None:
+    def create_report(
+        self,
+        worktrees: Sequence[Worktree],
+        models: Sequence[Model],
+        options: OptionsType,
+        report_options: OptionsType,
+        df: pd.DataFrame,
+    ) -> None:
         pass
-
 
 
 class NoModel(Model):
@@ -305,43 +380,40 @@ def build_parser():
         "--num-jobs",
         default=os.cpu_count(),
         type=int,
-        help="Number of parallel jobs for building"
+        help="Number of parallel jobs for building",
     )
     p.add_argument(
         "--cooldown",
         default=0.0,
         type=float,
-        help="Number of seconds to wait between runs"
+        help="Number of seconds to wait between runs",
     )
     p.add_argument(
-        "--warmup",
-        default=0,
-        type=int,
-        help="Number of warmup runs before measuring"
+        "--warmup", default=0, type=int, help="Number of warmup runs before measuring"
     )
     p.add_argument(
         "--models-dir",
         type=Path,
         help="Directory to look for models in (default: bench-workdir/models). "
-             "Files already present are reused; only missing ones are downloaded."
+        "Files already present are reused; only missing ones are downloaded.",
     )
     p.add_argument("--clean-unused", action="store_true")
     p.add_argument(
         "--no-monitor",
         action="store_true",
-        help="Disable the CPU/GPU monitoring sidecar"
+        help="Disable the CPU/GPU monitoring sidecar",
     )
     p.add_argument(
         "--monitor-interval",
         default=None,
         type=float,
-        help="Monitoring sample interval in seconds"
+        help="Monitoring sample interval in seconds",
     )
     p.add_argument(
         "--monitor-gpu-source",
         default="auto",
         choices=["auto", "sysfs", "smi", "none"],
-        help="GPU telemetry source for the monitor: sysfs reads amdgpu hwmon/sysfs files directly (preferred), smi shells out to nvidia-smi/amd-smi/rocm-smi"
+        help="GPU telemetry source for the monitor: sysfs reads amdgpu hwmon/sysfs files directly (preferred), smi shells out to nvidia-smi/amd-smi/rocm-smi",
     )
 
     return p
@@ -386,7 +458,9 @@ def apply_overrides(config, args):
 @cache
 def allvulkaninfo() -> list[str]:
     try:
-        vi = subprocess.run(["vulkaninfo", "--summary"], capture_output=True, text=True, check=True).stdout.strip()
+        vi = subprocess.run(
+            ["vulkaninfo", "--summary"], capture_output=True, text=True, check=True
+        ).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         return ["vulkaninfo unavailable or failed"]
 
@@ -409,7 +483,10 @@ def allvulkaninfo() -> list[str]:
                 key, value = map(str.strip, line.split("=", 1))
                 current[key] = value
 
-        return [f"{device.get('deviceName', 'Unknown')} - {device.get('driverName', 'Unknown')} {device.get('driverInfo', 'Unknown')}" for device in devices]
+        return [
+            f"{device.get('deviceName', 'Unknown')} - {device.get('driverName', 'Unknown')} {device.get('driverInfo', 'Unknown')}"
+            for device in devices
+        ]
 
     except (KeyError, TypeError, ValueError, AttributeError):
         return ["vulkaninfo summary parsing failed"]
@@ -418,7 +495,9 @@ def allvulkaninfo() -> list[str]:
 @cache
 def allopenclinfo() -> list[str]:
     try:
-        ci = subprocess.run(["clinfo"], capture_output=True, text=True, check=True).stdout
+        ci = subprocess.run(
+            ["clinfo"], capture_output=True, text=True, check=True
+        ).stdout
     except Exception:
         return ["clinfo unavailable or failed"]
 
@@ -433,13 +512,18 @@ def allopenclinfo() -> list[str]:
                 continue
 
             if current:
-                match = re.match(r"^\s*(Driver Version|Device Version)\s{2,}(.+?)\s*$", line)
+                match = re.match(
+                    r"^\s*(Driver Version|Device Version)\s{2,}(.+?)\s*$", line
+                )
                 if match:
                     current[match.group(1)] = match.group(2)
 
         if not devices:
             return ["clinfo found no devices"]
-        return [f"{device['name']} - {device.get('Device Version', 'Unknown')} {device.get('Driver Version', 'Unknown')}" for device in devices]
+        return [
+            f"{device['name']} - {device.get('Device Version', 'Unknown')} {device.get('Driver Version', 'Unknown')}"
+            for device in devices
+        ]
     except Exception:
         return ["clinfo parsing failed"]
 
@@ -469,8 +553,11 @@ def gpuinfo(worktrees, models, options) -> list[tuple[int, str, str]]:
     if "vulkan" in backends:
         api_devices.append(("Vulkan", allvulkaninfo()))
 
-    return [(d, api, devices[d] if d < len(devices) else "Unknown")
-            for d in sorted(visible_devices) for api, devices in api_devices]
+    return [
+        (d, api, devices[d] if d < len(devices) else "Unknown")
+        for d in sorted(visible_devices)
+        for api, devices in api_devices
+    ]
 
 
 def get_status(statuspath) -> str | None:
@@ -487,12 +574,7 @@ class LlamaBench(Benchmark):
         super().__init__(
             "llama-bench",
             ["llama-bench"],
-            {
-                "reps": 5,
-                "fa": "0",
-                "ngl": 99,
-                "ggml_vk_visible_devices": "0"
-            }
+            {"reps": 5, "fa": "0", "ngl": 99, "ggml_vk_visible_devices": "0"},
         )
 
     def run(self, run_ctx: RunContext) -> None:
@@ -509,13 +591,22 @@ class LlamaBench(Benchmark):
         with outpath.open("w") as out, errpath.open("w") as err:
             monitored_run(
                 [
-                    run_ctx.worktree.binary_path(self.binaries[0]), "-m", str(model_path), "-ngl", str(run_ctx.options["ngl"]),
-                    "-r", str(run_ctx.options["reps"]), "-fa", str(run_ctx.options["fa"]), "-o", "jsonl"
+                    run_ctx.worktree.binary_path(self.binaries[0]),
+                    "-m",
+                    str(model_path),
+                    "-ngl",
+                    str(run_ctx.options["ngl"]),
+                    "-r",
+                    str(run_ctx.options["reps"]),
+                    "-fa",
+                    str(run_ctx.options["fa"]),
+                    "-o",
+                    "jsonl",
                 ],
                 stdout=out,
                 stderr=err,
                 env=env,
-                check=True
+                check=True,
             )
 
     def verify_output(self, run_ctx: RunContext) -> bool:
@@ -553,29 +644,55 @@ class LlamaBench(Benchmark):
             for line in f:
                 row = json.loads(line)
                 label = metric_label(row)
-                rows.append({"model": run_ctx.model.name, "metric": label, "worktree": run_ctx.worktree.name, "tps": tps(row), "sd": sd(row)})
+                rows.append(
+                    {
+                        "model": run_ctx.model.name,
+                        "metric": label,
+                        "worktree": run_ctx.worktree.name,
+                        "tps": tps(row),
+                        "sd": sd(row),
+                    }
+                )
 
             return pd.DataFrame(rows)
 
-    def create_report(self, worktrees: Sequence[Worktree], models: Sequence[Model], options: OptionsType, report_options: OptionsType, df: pd.DataFrame) -> None:
+    def create_report(
+        self,
+        worktrees: Sequence[Worktree],
+        models: Sequence[Model],
+        options: OptionsType,
+        report_options: OptionsType,
+        df: pd.DataFrame,
+    ) -> None:
         reference = report_options.get("reference", worktrees[0].name)
         lines = []
-        lines.append(f"# Vulkan benchmark: {', '.join(f'`{worktree.name}`' for worktree in worktrees)}")
+        lines.append(
+            f"# Vulkan benchmark: {', '.join(f'`{worktree.name}`' for worktree in worktrees)}"
+        )
         lines.append("")
-        lines.append(f"- **Date**: {datetime.datetime.now(datetime.timezone.utc).isoformat()}")
+        lines.append(
+            f"- **Date**: {datetime.datetime.now(datetime.timezone.utc).isoformat()}"
+        )
         lines.append(f"- **Host**: {gethostname()}")
         for i, api, gpu in gpuinfo(worktrees, models, options):
             lines.append(f"- **GPU{i} ({api})**: {gpu}")
         for worktree in worktrees:
-            lines.append(f"- **Ref `{worktree.name}`**: `{worktree.build.repo}` `{worktree.build.branch}` @ `{worktree.sha[:12]}`")
+            lines.append(
+                f"- **Ref `{worktree.name}`**: `{worktree.build.repo}` `{worktree.build.branch}` @ `{worktree.sha[:12]}`"
+            )
         lines.append(f"- **Deltas vs {reference}**")
-        lines.append(f"- **llama-bench**: `-ngl {options['ngl']} -r {options['reps']} -fa {options['fa']} -o jsonl` (default pp512 + tg128)")
+        lines.append(
+            f"- **llama-bench**: `-ngl {options['ngl']} -r {options['reps']} -fa {options['fa']} -o jsonl` (default pp512 + tg128)"
+        )
         lines.append("")
 
         rows = []
         for (model, metric), group in df.groupby(["model", "metric"], sort=False):
             ref = group.loc[group.worktree == reference, "tps"].iloc[0]
-            row = { "Model": model, "Metric": metric, }
+            row = {
+                "Model": model,
+                "Metric": metric,
+            }
             for _, r in group.iterrows():
                 value = f"{r.tps:.2f} ±{r.sd:.2f}"
                 if r.worktree != reference:
@@ -592,6 +709,7 @@ class LlamaBench(Benchmark):
             f.write("\n")
 
         print(f"wrote {report_path}", file=sys.stderr)
+
 
 class LlamaFinetuneLora(Benchmark):
     loss_re = re.compile(r"loss\s*=?\s*(([0-9.eE+-]+)|inf|nan|-inf)")
@@ -621,8 +739,8 @@ class LlamaFinetuneLora(Benchmark):
                 "warmup_ratio": 0.1,
                 "lora_modules": "attn_q,attn_k,attn_v,attn_o,ffn_gate,ffn_up,ffn_down",
                 "fa": "off",
-                "ggml_vk_visible_devices": "0"
-            }
+                "ggml_vk_visible_devices": "0",
+            },
         )
 
     def run(self, run_ctx: RunContext) -> None:
@@ -640,26 +758,40 @@ class LlamaFinetuneLora(Benchmark):
             monitored_run(
                 [
                     run_ctx.worktree.binary_path(self.binaries[0]),
-                    "-m", model_path,
-                    "-f", run_ctx.options["dataset"],
+                    "-m",
+                    model_path,
+                    "-f",
+                    run_ctx.options["dataset"],
                     "--assistant-loss-only",
-                    "-c", str(run_ctx.options["ctx"]),
-                    "-b", str(run_ctx.options["batch"]),
-                    "-ub", str(run_ctx.options["ubatch"]),
-                    "-ngl", str(run_ctx.options["ngl"]),
-                    "-fa", str(run_ctx.options["fa"]),
-                    "--checkpoint-save-steps", "0",
-                    "--learning-rate", str(run_ctx.options["lr"]),
-                    "--lr-min", str(run_ctx.options["lr_min"]),
-                    "--lr-scheduler", str(run_ctx.options["lr_sched"]),
-                    "--warmup-ratio", str(run_ctx.options["warmup_ratio"]),
-                    "--num-epochs", "1",
-                    "--lora-modules", run_ctx.options["lora_modules"]
+                    "-c",
+                    str(run_ctx.options["ctx"]),
+                    "-b",
+                    str(run_ctx.options["batch"]),
+                    "-ub",
+                    str(run_ctx.options["ubatch"]),
+                    "-ngl",
+                    str(run_ctx.options["ngl"]),
+                    "-fa",
+                    str(run_ctx.options["fa"]),
+                    "--checkpoint-save-steps",
+                    "0",
+                    "--learning-rate",
+                    str(run_ctx.options["lr"]),
+                    "--lr-min",
+                    str(run_ctx.options["lr_min"]),
+                    "--lr-scheduler",
+                    str(run_ctx.options["lr_sched"]),
+                    "--warmup-ratio",
+                    str(run_ctx.options["warmup_ratio"]),
+                    "--num-epochs",
+                    "1",
+                    "--lora-modules",
+                    run_ctx.options["lora_modules"],
                 ],
                 stdout=out,
                 stderr=subprocess.STDOUT,
                 env=env,
-                check=True
+                check=True,
             )
             elapsed = time.perf_counter() - start
             out.writelines(["qvac_bench_wall_clock_sec: " + str(elapsed)])
@@ -670,7 +802,10 @@ class LlamaFinetuneLora(Benchmark):
             if LlamaFinetuneLora.parse_regex(LlamaFinetuneLora.loss_re, f) is None:
                 return False
             f.seek(0)
-            if LlamaFinetuneLora.parse_regex(LlamaFinetuneLora.wall_clock_sec_re, f) is None:
+            if (
+                LlamaFinetuneLora.parse_regex(LlamaFinetuneLora.wall_clock_sec_re, f)
+                is None
+            ):
                 return False
         return True
 
@@ -682,35 +817,67 @@ class LlamaFinetuneLora(Benchmark):
         with outpath.open("r") as f:
             loss = LlamaFinetuneLora.parse_regex(LlamaFinetuneLora.loss_re, f)
             f.seek(0)
-            epoch_s = LlamaFinetuneLora.parse_regex(LlamaFinetuneLora.wall_clock_sec_re, f)
+            epoch_s = LlamaFinetuneLora.parse_regex(
+                LlamaFinetuneLora.wall_clock_sec_re, f
+            )
 
-        return pd.DataFrame([{
-            "model": run_ctx.model.name,
-            "worktree": run_ctx.worktree.name,
-            "loss": float(loss) if loss is not None else float("nan"),
-            "epoch_s": float(epoch_s) if epoch_s is not None else float("nan"),
-        }])
+        return pd.DataFrame(
+            [
+                {
+                    "model": run_ctx.model.name,
+                    "worktree": run_ctx.worktree.name,
+                    "loss": float(loss) if loss is not None else float("nan"),
+                    "epoch_s": float(epoch_s) if epoch_s is not None else float("nan"),
+                }
+            ]
+        )
 
-    def create_report(self, worktrees: Sequence[Worktree], models: Sequence[Model], options: OptionsType, report_options: OptionsType, df: pd.DataFrame) -> None:
+    def create_report(
+        self,
+        worktrees: Sequence[Worktree],
+        models: Sequence[Model],
+        options: OptionsType,
+        report_options: OptionsType,
+        df: pd.DataFrame,
+    ) -> None:
         reference = report_options.get("reference", worktrees[0].name)
         loss_tol = report_options.get("loss_tolerance", 0.1)
         df = df.reindex(columns=["model", "worktree", "loss", "epoch_s"])
 
         lines = []
-        lines.append(f"# LoRA finetune regression: {', '.join(f'`{worktree.name}`' for worktree in worktrees)}")
+        lines.append(
+            f"# LoRA finetune regression: {', '.join(f'`{worktree.name}`' for worktree in worktrees)}"
+        )
         lines.append("")
-        lines.append(f"- **Date**: {datetime.datetime.now(datetime.timezone.utc).isoformat()}")
+        lines.append(
+            f"- **Date**: {datetime.datetime.now(datetime.timezone.utc).isoformat()}"
+        )
         lines.append(f"- **Host**: {gethostname()}")
         for i, api, gpu in gpuinfo(worktrees, models, options):
             lines.append(f"- **GPU{i} ({api})**: {gpu}")
         for worktree in worktrees:
-            lines.append(f"- **Ref `{worktree.name}`**: `{worktree.build.repo}` `{worktree.build.branch}` @ `{worktree.sha[:12]}`")
+            lines.append(
+                f"- **Ref `{worktree.name}`**: `{worktree.build.repo}` `{worktree.build.branch}` @ `{worktree.sha[:12]}`"
+            )
         lines.append(f"- **Loss tolerance (vs {reference})**: ±{loss_tol*100:.1f}%")
         lines.append("")
 
-        header = ["Model"] + [f"{wt.name} loss" for wt in worktrees] + [f"{wt.name} epoch_s" for wt in worktrees] + \
-                 [f"{wt.name} verdict (loss Δ%)" for wt in worktrees if wt.name != reference]
-        align  = ["---"] + ["---:"] * len(worktrees) + ["---:"] * len(worktrees) + ["---"] * len([wt for wt in worktrees if wt.name != reference])
+        header = (
+            ["Model"]
+            + [f"{wt.name} loss" for wt in worktrees]
+            + [f"{wt.name} epoch_s" for wt in worktrees]
+            + [
+                f"{wt.name} verdict (loss Δ%)"
+                for wt in worktrees
+                if wt.name != reference
+            ]
+        )
+        align = (
+            ["---"]
+            + ["---:"] * len(worktrees)
+            + ["---:"] * len(worktrees)
+            + ["---"] * len([wt for wt in worktrees if wt.name != reference])
+        )
         lines.append("| " + " | ".join(header) + " |")
         lines.append("|" + "|".join(align) + "|")
 
@@ -719,9 +886,15 @@ class LlamaFinetuneLora(Benchmark):
             metrics_loss = {}
             metrics_time = {}
             for worktree in worktrees:
-                result = df[(df["model"] == model.name) & (df["worktree"] == worktree.name)]
-                metrics_loss[worktree.name] = result["loss"].iloc[0] if not result.empty else float("nan")
-                metrics_time[worktree.name] = result["epoch_s"].iloc[0] if not result.empty else float("nan")
+                result = df[
+                    (df["model"] == model.name) & (df["worktree"] == worktree.name)
+                ]
+                metrics_loss[worktree.name] = (
+                    result["loss"].iloc[0] if not result.empty else float("nan")
+                )
+                metrics_time[worktree.name] = (
+                    result["epoch_s"].iloc[0] if not result.empty else float("nan")
+                )
 
             for worktree in worktrees:
                 row += f" {metrics_loss[worktree.name]:.4f} |"
@@ -733,17 +906,22 @@ class LlamaFinetuneLora(Benchmark):
                 if worktree.name == reference:
                     continue
 
-                if math.isnan(metrics_loss[reference]) or math.isnan(metrics_loss[worktree.name]):
+                if math.isnan(metrics_loss[reference]) or math.isnan(
+                    metrics_loss[worktree.name]
+                ):
                     row += " FAIL |"
                 else:
-                    delta_pct = (metrics_loss[worktree.name] - metrics_loss[reference]) / metrics_loss[reference] * 100.0
+                    delta_pct = (
+                        (metrics_loss[worktree.name] - metrics_loss[reference])
+                        / metrics_loss[reference]
+                        * 100.0
+                    )
                     if abs(delta_pct) <= loss_tol * 100.0:
                         row += f" PASS ({delta_pct:.2f}%) |"
                     else:
                         row += f" DIVERGE ({delta_pct:.2f}%) |"
 
             lines.append(row)
-
 
         report_path = RESULTS_DIR / f"{self.name}-report.md"
         with report_path.open("w") as f:
@@ -764,8 +942,8 @@ class LlamaMtmdCli(Benchmark):
                 "jinja": True,
                 "prompt": "Describe this image in one sentence",
                 "ggml_vk_visible_devices": "0",
-                "image_url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/master/media/llama0-banner.png"
-            }
+                "image_url": "https://raw.githubusercontent.com/ggml-org/llama.cpp/master/media/llama0-banner.png",
+            },
         )
 
     @staticmethod
@@ -786,7 +964,9 @@ class LlamaMtmdCli(Benchmark):
     def run(self, run_ctx: RunContext) -> None:
         model_path = MODELS_DIR / run_ctx.model.file
         if run_ctx.model.mmproj is None:
-            raise ValueError(f"model {run_ctx.model.file} does not have an associated .mmproj file")
+            raise ValueError(
+                f"model {run_ctx.model.file} does not have an associated .mmproj file"
+            )
         mmproj_path = MODELS_DIR / run_ctx.model.mmproj
 
         outpath = self.result_path(run_ctx, ".stdout")
@@ -796,22 +976,31 @@ class LlamaMtmdCli(Benchmark):
 
         def run_n_predict(n_predict, err):
             env = os.environ.copy()
-            env["GGML_VK_VISIBLE_DEVICES"] = str(run_ctx.options["ggml_vk_visible_devices"])
+            env["GGML_VK_VISIBLE_DEVICES"] = str(
+                run_ctx.options["ggml_vk_visible_devices"]
+            )
             monitored_run(
                 [
                     run_ctx.worktree.binary_path(self.binaries[0]),
-                    "-m", model_path,
-                    "--mmproj", mmproj_path,
-                    "--image", LlamaMtmdCli._image_path(run_ctx.options["image_url"]),
-                    "-p", run_ctx.options["prompt"],
-                    "-ngl", str(run_ctx.options["ngl"]),
-                    "-n", str(n_predict),
-                    "--ignore-eos"
-                ] + (["--jinja"] if run_ctx.options.get("jinja", True) else []),
+                    "-m",
+                    model_path,
+                    "--mmproj",
+                    mmproj_path,
+                    "--image",
+                    LlamaMtmdCli._image_path(run_ctx.options["image_url"]),
+                    "-p",
+                    run_ctx.options["prompt"],
+                    "-ngl",
+                    str(run_ctx.options["ngl"]),
+                    "-n",
+                    str(n_predict),
+                    "--ignore-eos",
+                ]
+                + (["--jinja"] if run_ctx.options.get("jinja", True) else []),
                 stdout=subprocess.DEVNULL,
                 stderr=err,
                 env=env,
-                check=True
+                check=True,
             )
 
         results = []
@@ -825,15 +1014,17 @@ class LlamaMtmdCli(Benchmark):
                 run_n_predict(run_ctx.options["n_predict"], err)
                 elapsed_tN = time.perf_counter() - start_tN
 
-                results.append({
-                    "ref": run_ctx.worktree.name,
-                    "model": run_ctx.model.file,
-                    "mmproj": run_ctx.model.mmproj,
-                    "rep": rep,
-                    "n_predict": run_ctx.options["n_predict"],
-                    "t0_wall_t": elapsed_t0,
-                    "tN_wall_t": elapsed_tN
-                    })
+                results.append(
+                    {
+                        "ref": run_ctx.worktree.name,
+                        "model": run_ctx.model.file,
+                        "mmproj": run_ctx.model.mmproj,
+                        "rep": rep,
+                        "n_predict": run_ctx.options["n_predict"],
+                        "t0_wall_t": elapsed_t0,
+                        "tN_wall_t": elapsed_tN,
+                    }
+                )
 
         with outpath.open("w") as out:
             json.dump(results, out, indent=2)
@@ -862,39 +1053,59 @@ class LlamaMtmdCli(Benchmark):
 
         rows = []
         for result in data:
-            rows.append({
-                "model": run_ctx.model.name,
-                "worktree": run_ctx.worktree.name,
-                "metric": "pp wall (s, lower=better)",
-                "value": result["t0_wall_t"],
-            })
-            rows.append({
-                "model": run_ctx.model.name,
-                "worktree": run_ctx.worktree.name,
-                "metric": "tg (decode, t/s, higher=better)",
-                "value": result["n_predict"] / (result["tN_wall_t"] - result["t0_wall_t"]),
-            })
+            rows.append(
+                {
+                    "model": run_ctx.model.name,
+                    "worktree": run_ctx.worktree.name,
+                    "metric": "pp wall (s, lower=better)",
+                    "value": result["t0_wall_t"],
+                }
+            )
+            rows.append(
+                {
+                    "model": run_ctx.model.name,
+                    "worktree": run_ctx.worktree.name,
+                    "metric": "tg (decode, t/s, higher=better)",
+                    "value": result["n_predict"]
+                    / (result["tN_wall_t"] - result["t0_wall_t"]),
+                }
+            )
         return pd.DataFrame(rows)
 
-    def create_report(self, worktrees: Sequence[Worktree], models: Sequence[Model], options: OptionsType, report_options: OptionsType, df: pd.DataFrame) -> None:
+    def create_report(
+        self,
+        worktrees: Sequence[Worktree],
+        models: Sequence[Model],
+        options: OptionsType,
+        report_options: OptionsType,
+        df: pd.DataFrame,
+    ) -> None:
         reference = report_options.get("reference", worktrees[0].name)
         df = df.reindex(columns=["model", "worktree", "metric", "value"])
 
         lines = []
-        lines.append(f"# Vulkan multimodal benchmark: {', '.join(f'`{wt.name}`' for wt in worktrees)}")
+        lines.append(
+            f"# Vulkan multimodal benchmark: {', '.join(f'`{wt.name}`' for wt in worktrees)}"
+        )
         lines.append("")
-        lines.append(f"- **Date**: {datetime.datetime.now(datetime.timezone.utc).isoformat()}")
+        lines.append(
+            f"- **Date**: {datetime.datetime.now(datetime.timezone.utc).isoformat()}"
+        )
         lines.append(f"- **Host**: {gethostname()}")
         for i, api, gpu in gpuinfo(worktrees, models, options):
             lines.append(f"- **GPU{i} ({api})**: {gpu}")
         for worktree in worktrees:
-            lines.append(f"- **Ref `{worktree.name}`**: `{worktree.build.repo}` `{worktree.build.branch}` @ `{worktree.sha[:12]}`")
+            lines.append(
+                f"- **Ref `{worktree.name}`**: `{worktree.build.repo}` `{worktree.build.branch}` @ `{worktree.sha[:12]}`"
+            )
         lines.append(f"- **Deltas vs {reference}**")
-        lines.append(f"- **llama-mtmd-cli**: `-ngl {options['ngl']} -n {options['n_predict']}`, reps={options['reps']}")
+        lines.append(
+            f"- **llama-mtmd-cli**: `-ngl {options['ngl']} -n {options['n_predict']}`, reps={options['reps']}"
+        )
         lines.append("")
 
         header_cells = ["Model", "Metric"] + [f"{wt.name}" for wt in worktrees]
-        align_cells  = ["---", "---"] + ["---:"] * len(worktrees)
+        align_cells = ["---", "---"] + ["---:"] * len(worktrees)
         lines.append("| " + " | ".join(header_cells) + " |")
         lines.append("|" + "|".join(align_cells) + "|")
 
@@ -906,17 +1117,29 @@ class LlamaMtmdCli(Benchmark):
             metrics = ("pp wall (s, lower=better)", "tg (decode, t/s, higher=better)")
             for metric_name in metrics:
                 row = [model.name, metric_name]
-                ref_values = df[(df["model"] == model.name) & (df["metric"] == metric_name) & (df["worktree"] == reference)]["value"]
+                ref_values = df[
+                    (df["model"] == model.name)
+                    & (df["metric"] == metric_name)
+                    & (df["worktree"] == reference)
+                ]["value"]
                 ref_mean = ref_values.mean() if not ref_values.empty else None
                 for worktree in worktrees:
-                    values = df[(df["model"] == model.name) & (df["metric"] == metric_name) & (df["worktree"] == worktree.name)]["value"]
+                    values = df[
+                        (df["model"] == model.name)
+                        & (df["metric"] == metric_name)
+                        & (df["worktree"] == worktree.name)
+                    ]["value"]
                     if values.empty:
                         row.append("-")
                     else:
                         mean = values.mean()
                         sd = values.std() if len(values) > 1 else 0.0
                         cell = f"{mean:.2f} ±{sd:.2f}"
-                        if worktree.name != reference and ref_mean is not None and ref_mean != 0.0:
+                        if (
+                            worktree.name != reference
+                            and ref_mean is not None
+                            and ref_mean != 0.0
+                        ):
                             delta_pct = (mean - ref_mean) / ref_mean * 100.0
                             cell += f" ({delta_pct:+.2f}%)"
                         row.append(cell)
@@ -931,13 +1154,22 @@ class LlamaMtmdCli(Benchmark):
 
         print(f"wrote {report_path}", file=sys.stderr)
 
+
 class Turboquant(Benchmark):
     def __init__(self) -> None:
         super().__init__(
             "turboquant",
             ["llama-bench", "llama-perplexity", "llama-server", "llama-completion"],
             {
-                "benchmarks": ["perf", "perp", "ruler", "longbench", "zeroscrolls", "leval", "niah"],
+                "benchmarks": [
+                    "perf",
+                    "perp",
+                    "ruler",
+                    "longbench",
+                    "zeroscrolls",
+                    "leval",
+                    "niah",
+                ],
                 "perf_force_coopmat": "",
                 "perf_args": ["-c", "large", "--pp-sizes", "2k,8k", "--skip-scalar"],
                 "perp_args": ["-c", "mid"],
@@ -947,7 +1179,7 @@ class Turboquant(Benchmark):
                 "leval_args": ["-c", "small"],
                 "niah_args": ["-c", "full"],
                 "ggml_vk_visible_devices": "0",
-            }
+            },
         )
 
     @staticmethod
@@ -1000,36 +1232,64 @@ class Turboquant(Benchmark):
             bench_path = self.result_path(run_ctx, f".{bench}")
             with outpath.open("a") as out:
                 monitored_run(
-                    ["bash", REPO_ROOT / "tests" / f"test-kv-cache-quantization-{bench}.sh", "--csv", bench_path] + run_ctx.options[f"{bench}_args"] + [run_ctx.worktree.build_path],
+                    [
+                        "bash",
+                        REPO_ROOT / "tests" / f"test-kv-cache-quantization-{bench}.sh",
+                        "--csv",
+                        bench_path,
+                    ]
+                    + run_ctx.options[f"{bench}_args"]
+                    + [run_ctx.worktree.build_path],
                     stdout=out,
                     stderr=subprocess.STDOUT,
                     env=bench_env,
-                    check=True
+                    check=True,
                 )
 
         # NIAH needs data from RULER
         if "niah" in benchmarks and not "ruler" in benchmarks:
             benchmarks = ["ruler"] + benchmarks
 
-        for bench in [b for b in ["ruler", "longbench", "zeroscrolls", "leval", "niah"] if b in benchmarks]:
+        for bench in [
+            b
+            for b in ["ruler", "longbench", "zeroscrolls", "leval", "niah"]
+            if b in benchmarks
+        ]:
             print("running:", bench)
             bench_path = self.result_path(run_ctx, f".{bench}")
             if bench == "ruler":
-                extra_args = ["--extra", "--cli-bin", f"{run_ctx.worktree.binary_path('llama-completion')}"]
+                extra_args = [
+                    "--extra",
+                    "--cli-bin",
+                    f"{run_ctx.worktree.binary_path('llama-completion')}",
+                ]
                 if run_ctx.model.tokenizer:
                     extra_args = ["--tokenizers", run_ctx.model.tokenizer] + extra_args
             else:
-                extra_args = ["--extra", "--server-bin", f"{run_ctx.worktree.binary_path('llama-server')}"]
+                extra_args = [
+                    "--extra",
+                    "--server-bin",
+                    f"{run_ctx.worktree.binary_path('llama-server')}",
+                ]
 
             with outpath.open("a") as out:
                 monitored_run(
-                    ["python3", REPO_ROOT / "tests" / f"test-kv-cache-{bench}.py", "--output-dir", bench_path,
-                     "--models", model_path, "--gpus", str(run_ctx.options["ggml_vk_visible_devices"])] +
-                     run_ctx.options[f"{bench}_args"] + extra_args,
+                    [
+                        "python3",
+                        REPO_ROOT / "tests" / f"test-kv-cache-{bench}.py",
+                        "--output-dir",
+                        bench_path,
+                        "--models",
+                        model_path,
+                        "--gpus",
+                        str(run_ctx.options["ggml_vk_visible_devices"]),
+                    ]
+                    + run_ctx.options[f"{bench}_args"]
+                    + extra_args,
                     stdout=out,
                     stderr=subprocess.STDOUT,
                     env=env,
-                    check=True
+                    check=True,
                 )
 
     def verify_output(self, run_ctx: RunContext) -> bool:
@@ -1039,7 +1299,11 @@ class Turboquant(Benchmark):
                 with bench_path.open(encoding="utf-8") as f:
                     rows = list(csv.DictReader(f))
                     for row in rows:
-                        if "model" not in row or "pp_vs_f16_x" not in row or "tg_vs_f16_x" not in row:
+                        if (
+                            "model" not in row
+                            or "pp_vs_f16_x" not in row
+                            or "tg_vs_f16_x" not in row
+                        ):
                             return False
                 return True
             except (OSError, csv.Error, UnicodeDecodeError, ValueError, KeyError):
@@ -1051,7 +1315,11 @@ class Turboquant(Benchmark):
                 with bench_path.open(encoding="utf-8") as f:
                     rows = list(csv.DictReader(f))
                     for row in rows:
-                        if "model" not in row or "bpw_avg" not in row or "ppl_mean" not in row:
+                        if (
+                            "model" not in row
+                            or "bpw_avg" not in row
+                            or "ppl_mean" not in row
+                        ):
                             return False
                 return True
             except (OSError, csv.Error, UnicodeDecodeError, ValueError, KeyError):
@@ -1080,63 +1348,103 @@ class Turboquant(Benchmark):
 
         return pd.concat(results, ignore_index=True) if results else pd.DataFrame()
 
-    def create_report_perf(self, worktrees: Sequence[Worktree], models: Sequence[Model], df: pd.DataFrame) -> list[str]:
+    def create_report_perf(
+        self, worktrees: Sequence[Worktree], models: Sequence[Model], df: pd.DataFrame
+    ) -> list[str]:
         lines = []
         for worktree in worktrees:
             for model in models:
-                rows = df[(df["benchmark"] == "perf") & (df["model"] == model.name) & (df["worktree"] == worktree.name)]
+                rows = df[
+                    (df["benchmark"] == "perf")
+                    & (df["model"] == model.name)
+                    & (df["worktree"] == worktree.name)
+                ]
                 if rows.empty:
                     continue
                 configs = rows["config"].drop_duplicates().tolist()
                 coopmats = rows["coopmat_mode"].drop_duplicates().tolist()
                 for config, coopmat in product(configs, coopmats):
-                    lines.append(f"### {model.file} - {config} - {coopmat} - {worktree.name}")
+                    lines.append(
+                        f"### {model.file} - {config} - {coopmat} - {worktree.name}"
+                    )
                     lines.append("")
                     lines.append("| K | V | BPW | pp | tg |")
                     lines.append("| :---- | :---- | ----: | ----: | ----: |")
-                    config_rows = rows[(rows["config"] == config) & (rows["coopmat_mode"] == coopmat)]
+                    config_rows = rows[
+                        (rows["config"] == config) & (rows["coopmat_mode"] == coopmat)
+                    ]
                     bpw_scale = 1.0
                     for _, row in config_rows.iterrows():
-                        if (row["cache_k"] == "f16" and row["cache_v"] == "f16"):
-                            bpw_scale = 16.0 / float(row['kv_size_mib'])
-                            lines.append(f"| {row['cache_k']} | {row['cache_v']} | {float(row['kv_size_mib']) * bpw_scale} | {row['pp_avg']} t/s (baseline) | {row['tg_avg']} t/s (baseline) |")
+                        if row["cache_k"] == "f16" and row["cache_v"] == "f16":
+                            bpw_scale = 16.0 / float(row["kv_size_mib"])
+                            lines.append(
+                                f"| {row['cache_k']} | {row['cache_v']} | {float(row['kv_size_mib']) * bpw_scale} | {row['pp_avg']} t/s (baseline) | {row['tg_avg']} t/s (baseline) |"
+                            )
                     for _, row in config_rows.iterrows():
-                        if (row["cache_k"] != "f16" or row["cache_v"] != "f16"):
-                            lines.append(f"| {row['cache_k']} | {row['cache_v']} | {float(row['kv_size_mib']) * bpw_scale} | {row['pp_vs_f16_x']}x | {row['tg_vs_f16_x']}x |")
+                        if row["cache_k"] != "f16" or row["cache_v"] != "f16":
+                            lines.append(
+                                f"| {row['cache_k']} | {row['cache_v']} | {float(row['kv_size_mib']) * bpw_scale} | {row['pp_vs_f16_x']}x | {row['tg_vs_f16_x']}x |"
+                            )
                     lines.append("")
 
         return lines
 
-    def create_report_perp(self, worktrees: Sequence[Worktree], models: Sequence[Model], df: pd.DataFrame) -> list[str]:
+    def create_report_perp(
+        self, worktrees: Sequence[Worktree], models: Sequence[Model], df: pd.DataFrame
+    ) -> list[str]:
         lines = []
-        combinations = [("f16", "f16"), ("tbq4_0", "pq4_0"), ("tbq3_0", "pq3_0"), ("pq4_0", "pq4_0"), ("pq3_0", "pq3_0"), ("q4_0", "q4_0")]
+        combinations = [
+            ("f16", "f16"),
+            ("tbq4_0", "pq4_0"),
+            ("tbq3_0", "pq3_0"),
+            ("pq4_0", "pq4_0"),
+            ("pq3_0", "pq3_0"),
+            ("q4_0", "q4_0"),
+        ]
         reference = ("f16", "f16", "off")
         for worktree in worktrees:
             lines.append(f"### {worktree.name}")
 
-            header = ["Model", f"{reference[0]}/{reference[1]} (ppl)"]  + [f"{k}/{v}" for k, v in combinations if (k, v) != reference[:2]]
+            header = ["Model", f"{reference[0]}/{reference[1]} (ppl)"] + [
+                f"{k}/{v}" for k, v in combinations if (k, v) != reference[:2]
+            ]
             lines.append("| " + " | ".join(header) + " |")
             lines.append("| :---- |" + " ----: |" * len(combinations))
 
             for model in models:
-                rows = df[(df["benchmark"] == "perp") & (df["model"] == model.name) & (df["worktree"] == worktree.name)]
+                rows = df[
+                    (df["benchmark"] == "perp")
+                    & (df["model"] == model.name)
+                    & (df["worktree"] == worktree.name)
+                ]
 
                 values = {}
                 for _, row in rows.iterrows():
-                    values[(row["cache_k"], row["cache_v"], row["norm_correction"])] = float(row["ppl_mean"])
+                    values[(row["cache_k"], row["cache_v"], row["norm_correction"])] = (
+                        float(row["ppl_mean"])
+                    )
 
                 cells = [model.file]
 
-                for (k,v) in combinations:
+                for k, v in combinations:
                     val = values.get((k, v, "off"), float("nan"))
                     val_nc = values.get((k, v, "on"), float("nan"))
-                    if (k,v) == reference[:2]:
+                    if (k, v) == reference[:2]:
                         cells.append(f"{values.get(reference, float('nan')):.2f}")
                     else:
                         if reference in values and not math.isnan(values[reference]):
+
                             def delta_pct(v, _values=values, _ref=reference):
                                 return (v - _values[_ref]) / _values[_ref] * 100.0
-                            cells.append(f"{delta_pct(val):+.2f}%" + (f" (α: {delta_pct(val_nc):+.2f}%)" if not math.isnan(val_nc) else ""))
+
+                            cells.append(
+                                f"{delta_pct(val):+.2f}%"
+                                + (
+                                    f" (α: {delta_pct(val_nc):+.2f}%)"
+                                    if not math.isnan(val_nc)
+                                    else ""
+                                )
+                            )
                         else:
                             cells.append("-")
 
@@ -1146,45 +1454,53 @@ class Turboquant(Benchmark):
 
         return lines
 
-
-    def create_report_turboquant_evals(self, worktrees: Sequence[Worktree], models: Sequence[Model], options: OptionsType, df: pd.DataFrame) -> list[str]:
-        active_benches = [b for b in ["ruler", "longbench", "zeroscrolls", "leval", "niah"]
-                          if b in options["benchmarks"]]
+    def create_report_turboquant_evals(
+        self,
+        worktrees: Sequence[Worktree],
+        models: Sequence[Model],
+        options: OptionsType,
+        df: pd.DataFrame,
+    ) -> list[str]:
+        active_benches = [
+            b
+            for b in ["ruler", "longbench", "zeroscrolls", "leval", "niah"]
+            if b in options["benchmarks"]
+        ]
         if not active_benches:
             return []
 
         eval_configs: list[tuple[str, str]] = [
-            ("f16",    "f16"),
-            ("q4_0",   "q4_0"),
+            ("f16", "f16"),
+            ("q4_0", "q4_0"),
             ("tbq3_0", "pq3_0"),
             ("tbq4_0", "pq4_0"),
             ("tbq4_0", "q4_0"),
         ]
 
         eval_bpw: dict[str, float] = {
-            "f16":    16.0,
-            "q8_0":   8.5,
-            "q4_0":   4.5,
+            "f16": 16.0,
+            "q8_0": 8.5,
+            "q4_0": 4.5,
             "tbq3_0": 4.25,
             "tbq4_0": 5.25,
-            "pq3_0":  3.25,
-            "pq4_0":  4.25,
+            "pq3_0": 3.25,
+            "pq4_0": 4.25,
         }
 
         bench_headers: dict[str, str] = {
-            "ruler":       "RULER main %",
-            "longbench":   "LongBench Avg",
+            "ruler": "RULER main %",
+            "longbench": "LongBench Avg",
             "zeroscrolls": "ZS Avg",
-            "leval":       "L-Eval Avg",
-            "niah":        "NIAH grid %",
+            "leval": "L-Eval Avg",
+            "niah": "NIAH grid %",
         }
 
         score_col: dict[str, str] = {
-            "ruler":       "mean_pct",
-            "longbench":   "mean_pct",
+            "ruler": "mean_pct",
+            "longbench": "mean_pct",
             "zeroscrolls": "mean_pct",
-            "leval":       "mean_pct",
-            "niah":        "score",
+            "leval": "mean_pct",
+            "niah": "score",
         }
 
         lines: list[str] = []
@@ -1195,22 +1511,33 @@ class Turboquant(Benchmark):
                 lines.append(f"### {model_label} - {worktree.name}")
                 lines.append("")
 
-                col_headers = ["Cache config", "BPW"] + [bench_headers[b] for b in active_benches]
+                col_headers = ["Cache config", "BPW"] + [
+                    bench_headers[b] for b in active_benches
+                ]
                 lines.append("| " + " | ".join(col_headers) + " |")
                 lines.append("| :---- | ----: |" + " ----: |" * len(active_benches))
 
                 values: dict[str, dict[tuple[str, str], float | None]] = {}
                 for bench in active_benches:
                     col = score_col[bench]
-                    bench_rows = df[(df["benchmark"] == bench) & (df["model"] == model.name) & (df["worktree"] == worktree.name)]
+                    bench_rows = df[
+                        (df["benchmark"] == bench)
+                        & (df["model"] == model.name)
+                        & (df["worktree"] == worktree.name)
+                    ]
                     values[bench] = {}
                     for k, v in eval_configs:
                         if bench_rows.empty:
                             matching = pd.Series(dtype=float)
                         else:
-                            matching = bench_rows[(bench_rows["cache_k"] == k) & (bench_rows["cache_v"] == v)][col]
+                            matching = bench_rows[
+                                (bench_rows["cache_k"] == k)
+                                & (bench_rows["cache_v"] == v)
+                            ][col]
                             matching = pd.to_numeric(matching, errors="coerce").dropna()
-                        values[bench][(k, v)] = matching.mean() if not matching.empty else None
+                        values[bench][(k, v)] = (
+                            matching.mean() if not matching.empty else None
+                        )
 
                 for k, v in eval_configs:
                     bpw = (eval_bpw.get(k, 0.0) + eval_bpw.get(v, 0.0)) / 2.0
@@ -1227,19 +1554,37 @@ class Turboquant(Benchmark):
 
         return lines
 
-    def create_report(self, worktrees: Sequence[Worktree], models: Sequence[Model], options: OptionsType, report_options: OptionsType, df: pd.DataFrame) -> None:
-        df = df.reindex(columns=list(df.columns) + [column for column in ("benchmark", "model", "worktree") if column not in df.columns])
+    def create_report(
+        self,
+        worktrees: Sequence[Worktree],
+        models: Sequence[Model],
+        options: OptionsType,
+        report_options: OptionsType,
+        df: pd.DataFrame,
+    ) -> None:
+        df = df.reindex(
+            columns=list(df.columns)
+            + [
+                column
+                for column in ("benchmark", "model", "worktree")
+                if column not in df.columns
+            ]
+        )
         lines = []
         lines.append("# TurboQuant Benchmarks")
         lines.append("")
-        lines.append("This report summarizes TurboQuant KV-cache benchmark and quality measurements across various models. Performance values are reported relative to each table's `f16/f16` baseline unless the cell is marked as the baseline.")
+        lines.append(
+            "This report summarizes TurboQuant KV-cache benchmark and quality measurements across various models. Performance values are reported relative to each table's `f16/f16` baseline unless the cell is marked as the baseline."
+        )
         lines.append("")
         lines.append(f"- **Date**: {datetime.datetime.now().isoformat()}")
         lines.append(f"- **Host**: {gethostname()}")
         for i, api, gpu in gpuinfo(worktrees, models, options):
             lines.append(f"- **GPU{i} ({api})**: {gpu}")
         for worktree in worktrees:
-            lines.append(f"- **Ref `{worktree.name}`**: `{worktree.build.repo}` `{worktree.build.branch}` @ `{worktree.sha[:12]}`")
+            lines.append(
+                f"- **Ref `{worktree.name}`**: `{worktree.build.repo}` `{worktree.build.branch}` @ `{worktree.sha[:12]}`"
+            )
         lines.append("")
 
         if "perf" in options["benchmarks"]:
@@ -1252,12 +1597,17 @@ class Turboquant(Benchmark):
             lines.append("")
             lines.extend(self.create_report_perp(worktrees, models, df))
 
-        eval_benches = [b for b in ["ruler", "longbench", "zeroscrolls", "leval", "niah"]
-                        if b in options["benchmarks"]]
+        eval_benches = [
+            b
+            for b in ["ruler", "longbench", "zeroscrolls", "leval", "niah"]
+            if b in options["benchmarks"]
+        ]
         if eval_benches:
             lines.append("## Cross-Eval Quality Summary")
             lines.append("")
-            lines.extend(self.create_report_turboquant_evals(worktrees, models, options, df))
+            lines.extend(
+                self.create_report_turboquant_evals(worktrees, models, options, df)
+            )
 
         report_path = RESULTS_DIR / f"{self.name}-report.md"
         with report_path.open("w") as f:
@@ -1266,12 +1616,7 @@ class Turboquant(Benchmark):
         print(f"wrote {report_path}", file=sys.stderr)
 
 
-benchmarks = [
-    LlamaBench(),
-    LlamaFinetuneLora(),
-    LlamaMtmdCli(),
-    Turboquant()
-]
+benchmarks = [LlamaBench(), LlamaFinetuneLora(), LlamaMtmdCli(), Turboquant()]
 
 
 def bench_driver(
@@ -1290,12 +1635,18 @@ def bench_driver(
     options = benchmark.default_options | options
 
     sweep_monitor_path = RESULTS_DIR / f"{benchmark.name}-monitor.jsonl"
-    monitor = MonitorClient(options.get("monitor", True), options.get("monitor_interval", 5.0),
-                            options.get("monitor_gpu_source", "auto"))
+    monitor = MonitorClient(
+        options.get("monitor", True),
+        options.get("monitor_interval", 5.0),
+        options.get("monitor_gpu_source", "auto"),
+    )
     set_monitor(monitor)
-    monitor.start(sweep_monitor_path, phase="setup",
-                  gpus=options.get("ggml_vk_visible_devices"),
-                  meta={"invocation": invocation} if invocation else None)
+    monitor.start(
+        sweep_monitor_path,
+        phase="setup",
+        gpus=options.get("ggml_vk_visible_devices"),
+        meta={"invocation": invocation} if invocation else None,
+    )
 
     try:
         log("driver", "downloading models for benchmark")
@@ -1308,23 +1659,38 @@ def bench_driver(
         builds_with_worktrees = []
         for build in builds:
             worktree = build.create_worktree()
-            worktree.build_binaries(benchmark.binaries, options["rebuild"], options["num_jobs"])
+            worktree.build_binaries(
+                benchmark.binaries, options["rebuild"], options["num_jobs"]
+            )
             builds_with_worktrees.append((build, worktree))
 
         if options["clean_unused"]:
             for wt in WORKDIR.glob("wt/*"):
                 for build_dir in wt.glob("build-*"):
-                    if build_dir.is_dir() and not any(build_dir == w.build_path for _, w in builds_with_worktrees):
+                    if build_dir.is_dir() and not any(
+                        build_dir == w.build_path for _, w in builds_with_worktrees
+                    ):
                         log("driver", f"removing unused build directory: {build_dir}")
                         shutil.rmtree(build_dir)
 
                     if not any(b.is_dir() for b in wt.glob("build-*")):
                         log("driver", f"removing unused worktree directory: {wt}")
-                        subprocess.run(["git", "-C", str(REPO_ROOT), "worktree", "remove", "--force", str(wt)], check=True)
+                        subprocess.run(
+                            [
+                                "git",
+                                "-C",
+                                str(REPO_ROOT),
+                                "worktree",
+                                "remove",
+                                "--force",
+                                str(wt),
+                            ],
+                            check=True,
+                        )
 
         monitor.phase("idle")
 
-        for (build, worktree) in builds_with_worktrees:
+        for build, worktree in builds_with_worktrees:
             for model in models:
                 run_ctx = RunContext(worktree, model, options)
                 benchmark.download_assets(run_ctx.options)
@@ -1336,24 +1702,29 @@ def bench_driver(
                     if status == "success" and benchmark.verify_output(run_ctx):
                         log(
                             "driver",
-                            f"skipping {benchmark.name} on build {build.name} with model {model.file} (already successful, {statuspath.name})"
+                            f"skipping {benchmark.name} on build {build.name} with model {model.file} (already successful, {statuspath.name})",
                         )
                         continue
                     elif status == "failure" and not options["retry_failed"]:
                         log(
                             "driver",
-                            f"skipping {benchmark.name} on build {build.name} with model {model.file} (previously failed, use --restart or --retry-failed, {statuspath.name})"
+                            f"skipping {benchmark.name} on build {build.name} with model {model.file} (previously failed, use --restart or --retry-failed, {statuspath.name})",
                         )
                         continue
 
-                log("driver", f"cleaning results for {benchmark.name} on build {build.name} with model {model.file}")
+                log(
+                    "driver",
+                    f"cleaning results for {benchmark.name} on build {build.name} with model {model.file}",
+                )
 
                 benchmark.clean_results(run_ctx)
 
                 phases: OptionsType = {}
 
                 def mark(label: str, _phases: OptionsType = phases) -> None:
-                    _phases[label] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                    _phases[label] = datetime.datetime.now(
+                        datetime.timezone.utc
+                    ).isoformat()
 
                 # Filled in-place by monitored_run() with the argv of every
                 # command executed during the measured run (warmups excluded).
@@ -1382,34 +1753,48 @@ def bench_driver(
                 if monitor.active:
                     status["monitor"] = monitor_path.name
                     status["events"] = events_path.name
-                monitor.rotate(monitor_path, run={
-                    "benchmark": benchmark.name,
-                    "build": build.name,
-                    "repo": build.repo,
-                    "branch": build.branch,
-                    "sha": worktree.sha,
-                    "backend": build.backend,
-                    "model": model.file,
-                    "result_stem": benchmark.result_path_stem(run_ctx).name,
-                }, phase="cooldown", events_path=events_path,
-                   gpus=run_ctx.options.get("ggml_vk_visible_devices"))
+                monitor.rotate(
+                    monitor_path,
+                    run={
+                        "benchmark": benchmark.name,
+                        "build": build.name,
+                        "repo": build.repo,
+                        "branch": build.branch,
+                        "sha": worktree.sha,
+                        "backend": build.backend,
+                        "model": model.file,
+                        "result_stem": benchmark.result_path_stem(run_ctx).name,
+                    },
+                    phase="cooldown",
+                    events_path=events_path,
+                    gpus=run_ctx.options.get("ggml_vk_visible_devices"),
+                )
                 mark("cooldown")
                 if run_ctx.options["cooldown"] > 0:
-                    log("driver", f"cooling down {run_ctx.options['cooldown']}s before {benchmark.name} on build {build.name} with model {model.file}")
+                    log(
+                        "driver",
+                        f"cooling down {run_ctx.options['cooldown']}s before {benchmark.name} on build {build.name} with model {model.file}",
+                    )
                     time.sleep(run_ctx.options["cooldown"])
 
                 try:
                     if run_ctx.options["warmup"] > 0:
                         monitor.phase("warmup")
                         mark("warmup")
-                        log("driver", f"performing {run_ctx.options['warmup']} warmup runs for {benchmark.name} on build {build.name} with model {model.file}")
+                        log(
+                            "driver",
+                            f"performing {run_ctx.options['warmup']} warmup runs for {benchmark.name} on build {build.name} with model {model.file}",
+                        )
                         for _ in range(run_ctx.options["warmup"]):
                             benchmark.run(run_ctx)
                             benchmark.clean_results(run_ctx)
 
                     monitor.phase("run")
                     mark("run")
-                    log("driver", f"running {benchmark.name} on build {build.name} with model {model.file}")
+                    log(
+                        "driver",
+                        f"running {benchmark.name} on build {build.name} with model {model.file}",
+                    )
 
                     monitor.run_start()
                     set_run_commands(commands)
@@ -1419,29 +1804,43 @@ def bench_driver(
                         set_run_commands(None)
                         monitor.run_end()
                     if not benchmark.verify_output(run_ctx):
-                        raise ValueError(f"invalid benchmark output under {statuspath.stem}.*")
+                        raise ValueError(
+                            f"invalid benchmark output under {statuspath.stem}.*"
+                        )
                     status["status"] = "success"
                 except Exception as e:  # noqa: BLE001
-                    log("driver", f"{benchmark.name} on build {build.name} with model {model.file} failed: {e}")
+                    log(
+                        "driver",
+                        f"{benchmark.name} on build {build.name} with model {model.file} failed: {e}",
+                    )
                     status["status"] = "failure"
                 mark("end")
 
                 with statuspath.open("w") as f:
                     json.dump(status, f, indent=2)
 
-                monitor.rotate(sweep_monitor_path, run=None, phase="idle",
-                               gpus=options.get("ggml_vk_visible_devices"))
+                monitor.rotate(
+                    sweep_monitor_path,
+                    run=None,
+                    phase="idle",
+                    gpus=options.get("ggml_vk_visible_devices"),
+                )
     finally:
         monitor.stop()
         set_monitor(None)
 
     dfs = []
-    for (build, worktree) in builds_with_worktrees:
+    for build, worktree in builds_with_worktrees:
         for model in models:
             dfs.append(benchmark.get_results(RunContext(worktree, model, options)))
 
-    benchmark.create_report([w for (_, w) in builds_with_worktrees], models, options, report_options,
-                            pd.concat(dfs, ignore_index=True) if len(dfs) > 0 else pd.DataFrame())
+    benchmark.create_report(
+        [w for (_, w) in builds_with_worktrees],
+        models,
+        options,
+        report_options,
+        pd.concat(dfs, ignore_index=True) if len(dfs) > 0 else pd.DataFrame(),
+    )
 
 
 def main() -> None:
