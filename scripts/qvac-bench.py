@@ -22,6 +22,12 @@ from typing import Any, ClassVar
 
 import pandas as pd
 
+from qvac_bench_db import (
+    DbPreflightError,
+    build_number_from_label,
+    make_pusher,
+    normalize_branch_label,
+)
 from qvac_bench_interface import (
     MonitorClient,
     build_invocation,
@@ -408,6 +414,12 @@ def build_parser():
         default=None,
         type=float,
         help="Monitoring sample interval in seconds",
+    )
+    p.add_argument(
+        "--db-url",
+        default=os.environ.get("DATABASE_URL"),
+        help="Postgres/TimescaleDB URL to push results to as they complete "
+        "(default: $DATABASE_URL; no push when unset)",
     )
     p.add_argument(
         "--monitor-gpu-source",
@@ -859,7 +871,7 @@ class LlamaFinetuneLora(Benchmark):
             lines.append(
                 f"- **Ref `{worktree.name}`**: `{worktree.build.repo}` `{worktree.build.branch}` @ `{worktree.sha[:12]}`"
             )
-        lines.append(f"- **Loss tolerance (vs {reference})**: ±{loss_tol*100:.1f}%")
+        lines.append(f"- **Loss tolerance (vs {reference})**: ±{loss_tol * 100:.1f}%")
         lines.append("")
 
         header = (
@@ -1626,6 +1638,7 @@ def bench_driver(
     options: OptionsType,
     report_options: OptionsType,
     invocation: "OptionsType | None" = None,
+    db_url: "str | None" = None,
 ) -> None:
     WORKDIR.mkdir(exist_ok=True)
     RESULTS_DIR.mkdir(exist_ok=True)
@@ -1641,6 +1654,12 @@ def bench_driver(
         sys.exit(
             f"report: reference {reference!r} matches no build in {build_names}"
         )
+    try:
+        pusher = make_pusher(db_url)
+        if pusher:
+            pusher.ping()
+    except DbPreflightError as e:
+        sys.exit(f"db: {e}")
 
     sweep_monitor_path = RESULTS_DIR / f"{benchmark.name}-monitor.jsonl"
     monitor = MonitorClient(
@@ -1833,9 +1852,38 @@ def bench_driver(
                     phase="idle",
                     gpus=options.get("ggml_vk_visible_devices"),
                 )
+
+                if pusher:
+                    pusher.push_run(
+                        benchmark.result_path_stem(run_ctx),
+                        wait_s=2.0 if monitor.active else 0.0,
+                    )
     finally:
         monitor.stop()
         set_monitor(None)
+
+    if pusher:
+        # Catch-up pass: skipped already-successful runs plus anything the
+        # per-run push missed (e.g. monitor files finalized late or the
+        # database being briefly unreachable). Upserts are idempotent.
+        for status_path in sorted(RESULTS_DIR.glob(f"{benchmark.name}-*.status")):
+            pusher.push_run(status_path.with_suffix(""))
+        if len(builds_with_worktrees) == 1:
+            build, worktree = builds_with_worktrees[0]
+            branch = normalize_branch_label(build.branch) or build.branch
+            gpus = allgpuinfo()
+            pusher.push_sweep_monitor(
+                sweep_monitor_path,
+                {
+                    "commit_sha": worktree.sha[:9],
+                    "branch": branch,
+                    "backend": build.backend,
+                    "model": "",
+                    "device": gpus[0].split(" - ")[0].strip() if gpus else "",
+                    "build_number": build_number_from_label(branch) or 0,
+                    "host": "",
+                },
+            )
 
     dfs = []
     for build, worktree in builds_with_worktrees:
@@ -1895,6 +1943,7 @@ def main() -> None:
         config.get("options", {}),
         config.get("report_options", {}),
         invocation,
+        db_url=args.db_url,
     )
 
 

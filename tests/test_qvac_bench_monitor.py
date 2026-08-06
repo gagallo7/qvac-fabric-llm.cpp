@@ -27,6 +27,13 @@ def load_interface():
     return module
 
 
+def load_db():
+    module = load_script("qvac_bench_db", REPO_ROOT / "scripts" / "qvac_bench_db.py")
+    # Same registration dance as load_interface().
+    sys.modules["qvac_bench_db"] = module
+    return module
+
+
 def load_qvac_bench():
     pandas = types.ModuleType("pandas")
     pandas.DataFrame = type("DataFrame", (), {})
@@ -46,6 +53,7 @@ qbm = load_script(
     REPO_ROOT / "scripts" / "qvac-bench-monitor.py",
 )
 qbi = load_interface()
+qbd = load_db()
 qb = load_qvac_bench()
 
 
