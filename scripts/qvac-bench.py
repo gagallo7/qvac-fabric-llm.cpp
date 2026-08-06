@@ -1637,7 +1637,7 @@ def bench_driver(
     sweep_monitor_path = RESULTS_DIR / f"{benchmark.name}-monitor.jsonl"
     monitor = MonitorClient(
         options.get("monitor", True),
-        options.get("monitor_interval", 5.0),
+        options.get("monitor_interval", 0.1),
         options.get("monitor_gpu_source", "auto"),
     )
     set_monitor(monitor)
