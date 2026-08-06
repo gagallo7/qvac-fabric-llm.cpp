@@ -160,3 +160,6 @@ a.out.*
 
 AGENTS.local.md
 .pi/SYSTEM.md
+
+# qvac-bench.py working tree (worktrees, builds, models, results)
+/bench-workdir/
