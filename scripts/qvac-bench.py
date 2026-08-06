@@ -1634,6 +1634,14 @@ def bench_driver(
 
     options = benchmark.default_options | options
 
+    # Preflight: catch config mistakes before hours of building/benching.
+    build_names = [b.name for b in builds]
+    reference = report_options.get("reference")
+    if reference is not None and reference not in build_names:
+        sys.exit(
+            f"report: reference {reference!r} matches no build in {build_names}"
+        )
+
     sweep_monitor_path = RESULTS_DIR / f"{benchmark.name}-monitor.jsonl"
     monitor = MonitorClient(
         options.get("monitor", True),
