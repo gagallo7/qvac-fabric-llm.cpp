@@ -8,7 +8,9 @@ repo's import_llama_bench_output.py over the results directory.
 The column tuples, natural keys and row-mapping semantics below intentionally
 mirror that importer: rows pushed from here and rows imported from the same
 files must produce identical natural keys, so either path is an idempotent
-re-upsert of the other.
+re-upsert of the other. That includes run_id: both paths read it from the
+.status file (minted once per execution by qvac-bench.py), so schema or
+semantics changes here must be mirrored in the importer.
 
 psycopg is imported lazily; without it (or without a database URL) the bench
 runs exactly as before. Every push is best-effort — a database problem is
@@ -31,6 +33,7 @@ def log(label: str, msg: str) -> None:
 BENCH_COLUMNS = (
     "time", "commit_sha", "branch", "build_number", "device", "backend",
     "model", "metric", "value", "stddev", "n_samples", "samples", "run_url",
+    "run_id",
 )
 BENCH_KEY_COLUMNS = ("time", "commit_sha", "device", "backend", "model", "metric")
 # value and run_url keep their stored values when a re-push hits an existing key.
@@ -40,7 +43,7 @@ BENCH_UPDATE_COLUMNS = tuple(
 
 MONITOR_SAMPLE_COLUMNS = (
     "time", "commit_sha", "branch", "build_number", "device", "backend",
-    "model", "host", "phase", "metric", "value",
+    "model", "host", "phase", "run_id", "metric", "value",
 )
 MONITOR_SAMPLE_KEY_COLUMNS = ("time", "commit_sha", "device", "backend", "model", "metric")
 MONITOR_SAMPLE_UPDATE_COLUMNS = tuple(
@@ -51,6 +54,7 @@ MONITOR_EVENT_COLUMNS = (
     "time", "end_time", "duration_s", "commit_sha", "branch", "build_number",
     "device", "backend", "model", "host", "event_type", "category", "reason",
     "gpu_index", "gpu_name", "source", "phase", "phases", "initial", "still_open",
+    "run_id",
 )
 MONITOR_EVENT_KEY_COLUMNS = (
     "time", "commit_sha", "device", "backend", "model", "event_type", "reason", "gpu_index",
@@ -84,6 +88,19 @@ MONITOR_EVENT_UPSERT_SQL = _upsert_sql(
 
 BUILD_TAG_RE = re.compile(r"^b(\d+)$")
 BUILD_NUMBER_RE = re.compile(r"b(\d+)$")
+
+# One run_id per benchmark execution: "<result_stem>@<utc-iso-timestamp>",
+# minted by qvac-bench.py when the job starts and stored in the .status file.
+RUN_ID_TABLES = ("benchmark_results", "monitor_samples", "monitor_events")
+RUN_ID_MIGRATION = tuple(
+    stmt.format(table=t)
+    for t in RUN_ID_TABLES
+    for stmt in (
+        "ALTER TABLE {table} ADD COLUMN IF NOT EXISTS run_id TEXT;",
+        "CREATE INDEX IF NOT EXISTS {table}_run_id_idx"
+        " ON {table} (run_id text_pattern_ops);",
+    )
+)
 
 GPU_METRIC_FIELDS = (
     "temp_c", "temp_edge_c", "temp_junction_c", "temp_mem_c",
@@ -172,7 +189,7 @@ def iter_jsonl(file: Path):
             yield obj
 
 
-def record_to_row(r: dict, branch: str) -> tuple:
+def record_to_row(r: dict, ctx: dict) -> tuple:
     metric = (
         f"pp{r['n_prompt']}_tokens_per_sec"
         if r.get("n_prompt")
@@ -184,7 +201,7 @@ def record_to_row(r: dict, branch: str) -> tuple:
     return (
         r.get("test_time"),
         r["build_commit"],
-        branch,
+        ctx["branch"],
         r["build_number"],
         r.get("gpu_info") or r.get("cpu_info") or "",
         r.get("backends") or "",
@@ -195,6 +212,7 @@ def record_to_row(r: dict, branch: str) -> tuple:
         len(samples) if samples else 1,
         samples,
         None,
+        ctx.get("run_id"),
     )
 
 
@@ -213,6 +231,7 @@ def sample_to_metric_rows(sample: dict, ctx: dict) -> list:
         ctx["model"],
         ctx.get("host") or "",
         sample.get("phase") or "",
+        ctx.get("run_id"),
     )
     rows: list = []
 
@@ -289,6 +308,7 @@ def event_to_row(event: dict, ctx: dict) -> "tuple | None":
         phases,
         bool(event.get("initial")),
         end.get("ts") is None,
+        ctx.get("run_id"),
     )
 
 
@@ -314,6 +334,8 @@ def context_from_status(status: dict) -> "dict | None":
         "device": device,
         "build_number": build_number_from_label(branch) or 0,
         "host": "",
+        # Absent in status files from before run ids existed; pushed as NULL.
+        "run_id": status.get("run_id"),
     }
 
 
@@ -366,7 +388,7 @@ def collect_run_rows(stem: Path) -> "tuple[list, list, list]":
     if status.get("status") == "success" and stdout_path.is_file():
         for rec in iter_records(stdout_path):
             try:
-                bench_rows.append(record_to_row(rec, ctx["branch"]))
+                bench_rows.append(record_to_row(rec, ctx))
             except (KeyError, TypeError, ValueError):
                 pass
 
@@ -436,8 +458,21 @@ class DbPusher:
                 with conn.cursor() as cursor:
                     cursor.execute("SELECT 1")
                     cursor.fetchone()
+                    cursor.execute(
+                        "SELECT table_name FROM information_schema.columns"
+                        " WHERE table_name = ANY(%s) AND column_name = 'run_id'",
+                        (list(RUN_ID_TABLES),),
+                    )
+                    have_run_id = {row[0] for row in cursor.fetchall()}
         except Exception as e:  # noqa: BLE001
             raise DbPreflightError(f"cannot reach database: {e}") from e
+        missing = [t for t in RUN_ID_TABLES if t not in have_run_id]
+        if missing:
+            raise DbPreflightError(
+                "run_id column missing on: " + ", ".join(missing)
+                + " (also mirror this in the dashboards repo schema/importer); apply:\n"
+                + "\n".join(RUN_ID_MIGRATION)
+            )
         log("db", "database reachable")
 
     def push_run(self, stem: Path, wait_s: float = 0.0) -> bool:
