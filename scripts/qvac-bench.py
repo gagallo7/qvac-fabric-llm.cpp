@@ -1721,6 +1721,7 @@ def bench_driver(
                 benchmark.download_assets(run_ctx.options)
 
                 statuspath = benchmark.status_path(run_ctx)
+                stem_name = benchmark.result_path_stem(run_ctx).name
 
                 if not options["restart"]:
                     status = get_status(statuspath)
@@ -1755,13 +1756,22 @@ def bench_driver(
                 # command executed during the measured run (warmups excluded).
                 commands: list[list[str]] = []
 
+                # One id per execution of this job. The stem alone names a
+                # (build, model, config) combination, not an execution — a
+                # --restart replay reuses it — so the start timestamp
+                # disambiguates. Lands in the status file, the monitor/events
+                # headers and every database row of this run.
+                date = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                run_id = f"{stem_name}@{date}"
+
                 status = {
                     "ref": worktree.sha,
                     "repo": build.repo,
                     "branch": build.branch,
                     "backend": build.backend,
                     "model": model.file,
-                    "date": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    "date": date,
+                    "run_id": run_id,
                     "options": run_ctx.options,
                     "invocation": invocation,
                     "commands": commands,
@@ -1788,7 +1798,8 @@ def bench_driver(
                         "sha": worktree.sha,
                         "backend": build.backend,
                         "model": model.file,
-                        "result_stem": benchmark.result_path_stem(run_ctx).name,
+                        "result_stem": stem_name,
+                        "run_id": run_id,
                     },
                     phase="cooldown",
                     events_path=events_path,
@@ -1880,6 +1891,9 @@ def bench_driver(
                     "device": gpus[0].split(" - ")[0].strip() if gpus else "",
                     "build_number": build_number_from_label(branch) or 0,
                     "host": "",
+                    # The sweep file spans idle/build stretches between runs;
+                    # its samples belong to no single execution.
+                    "run_id": None,
                 },
             )
 
