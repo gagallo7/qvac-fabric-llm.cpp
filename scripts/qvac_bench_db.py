@@ -91,6 +91,8 @@ BUILD_NUMBER_RE = re.compile(r"b(\d+)$")
 
 # One run_id per benchmark execution: "<result_stem>@<utc-iso-timestamp>",
 # minted by qvac-bench.py when the job starts and stored in the .status file.
+# The stem prefix lets the replay guard find every prior execution of a
+# (build, model, config) combination with an indexed LIKE.
 RUN_ID_TABLES = ("benchmark_results", "monitor_samples", "monitor_events")
 RUN_ID_MIGRATION = tuple(
     stmt.format(table=t)
@@ -101,6 +103,12 @@ RUN_ID_MIGRATION = tuple(
         " ON {table} (run_id text_pattern_ops);",
     )
 )
+
+
+def stem_like_pattern(stem: str) -> str:
+    """LIKE pattern matching every run_id minted for a result stem."""
+    escaped = stem.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return escaped + "@%"
 
 GPU_METRIC_FIELDS = (
     "temp_c", "temp_edge_c", "temp_junction_c", "temp_mem_c",
@@ -474,6 +482,35 @@ class DbPusher:
                 + "\n".join(RUN_ID_MIGRATION)
             )
         log("db", "database reachable")
+
+    def stem_status(self, stem: str) -> "str | None":
+        """Whether the database already holds a prior execution of this stem.
+
+        Returns 'success' when bench rows exist (only successful runs produce
+        them), 'attempted' when only monitor telemetry exists, and None for an
+        unseen stem — or on any error, because this replay guard must never
+        block a bench run. Rows pushed before run ids existed have NULL
+        run_id and are invisible to the guard.
+        """
+        pattern = stem_like_pattern(stem)
+        try:
+            import psycopg
+
+            with psycopg.connect(self.db_url, connect_timeout=10) as conn:
+                with conn.cursor() as cursor:
+                    for table, verdict in (
+                        ("benchmark_results", "success"),
+                        ("monitor_samples", "attempted"),
+                    ):
+                        cursor.execute(
+                            f"SELECT EXISTS (SELECT 1 FROM {table} WHERE run_id LIKE %s)",
+                            (pattern,),
+                        )
+                        if cursor.fetchone()[0]:
+                            return verdict
+        except Exception as e:  # noqa: BLE001
+            log("db", f"replay check failed for {stem}: {e}")
+        return None
 
     def push_run(self, stem: Path, wait_s: float = 0.0) -> bool:
         try:

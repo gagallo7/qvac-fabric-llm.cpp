@@ -379,8 +379,18 @@ def build_parser():
         help="Format: key:value (repeatable)",
     )
 
-    p.add_argument("--restart", action="store_true")
-    p.add_argument("--retry-failed", action="store_true")
+    p.add_argument(
+        "--restart",
+        action="store_true",
+        help="Re-run every job, even ones already successful locally or "
+        "already recorded in the database",
+    )
+    p.add_argument(
+        "--retry-failed",
+        action="store_true",
+        help="Re-run jobs whose previous attempt failed (locally or in the "
+        "database)",
+    )
     p.add_argument("--rebuild", action="store_true")
     p.add_argument(
         "--num-jobs",
@@ -1735,6 +1745,23 @@ def bench_driver(
                         log(
                             "driver",
                             f"skipping {benchmark.name} on build {build.name} with model {model.file} (previously failed, use --restart or --retry-failed, {statuspath.name})",
+                        )
+                        continue
+                    # The local status said nothing conclusive (fresh workdir,
+                    # damaged output, or a failure being retried); make sure a
+                    # prior execution of this stem isn't already in the
+                    # database before replaying it.
+                    db_seen = pusher.stem_status(stem_name) if pusher else None
+                    if db_seen == "success":
+                        log(
+                            "driver",
+                            f"skipping {benchmark.name} on build {build.name} with model {model.file} (results already in database for {stem_name}, use --restart)",
+                        )
+                        continue
+                    elif db_seen == "attempted" and not options["retry_failed"]:
+                        log(
+                            "driver",
+                            f"skipping {benchmark.name} on build {build.name} with model {model.file} (previous attempt in database for {stem_name}, use --restart or --retry-failed)",
                         )
                         continue
 
