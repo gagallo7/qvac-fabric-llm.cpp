@@ -111,10 +111,18 @@ To force plain TCP without rebuilding, set `GGML_RPC_NO_RDMA` on either peer:
 $ GGML_RPC_NO_RDMA=1 bin/ggml-rpc-server
 ```
 
+### Direct all-reduce
+
+Tensor split with exactly two RPC devices uses a direct server-to-server connection for all-reduce. The first server listens on its RPC port plus 1000, and the second server connects to it. Set `GGML_RPC_COMM_PORT` on the main host to use a different port.
+
+Allow the communication port through the firewall and ensure that the servers can connect to each other. Use this only on a trusted private network because the connection does not provide transport authentication or encryption. Set `GGML_RPC_NO_COMM=1` on the main host to disable direct all-reduce.
+
 ### Troubleshooting
 
 Use the `GGML_RPC_DEBUG` environment variable to enable debug messages from `ggml-rpc-server`:
 ```bash
 $ GGML_RPC_DEBUG=1 bin/ggml-rpc-server
 ```
+
+Set `GGML_RPC_NO_WIRE_BF16=1` on the main host to keep direct all-reduce transfers in F32. By default, large F32 all-reduce tensors use BF16 on the wire to reduce peer traffic.
 
