@@ -241,7 +241,7 @@ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
         FIXTURES_SETUP generate-models
     )
 
-    # WebGPU excludes QWEN35 in arch_supported() (test-llama-archs.cpp)
+    # WebGPU excludes QWEN35 and DEEPSEEK4 in arch_supported() (test-llama-archs.cpp)
     if (NOT GGML_WEBGPU)
         llama_test(
             test-recurrent-state-rollback
@@ -249,6 +249,15 @@ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
             ARGS -m "${MODEL_DIR}/qwen35-dense.gguf"
         )
         set_tests_properties(test-recurrent-state-rollback PROPERTIES
+            FIXTURES_REQUIRED generate-models
+        )
+        llama_test(
+            test-recurrent-state-rollback
+            NAME test-recurrent-state-rollback-dsv4
+            LABEL main
+            ARGS -m "${MODEL_DIR}/deepseek4-moe.gguf"
+        )
+        set_tests_properties(test-recurrent-state-rollback-dsv4 PROPERTIES
             FIXTURES_REQUIRED generate-models
         )
     endif()
@@ -260,15 +269,6 @@ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
         ARGS -m "${MODEL_DIR}/nemotron_h-dense.gguf"
     )
     set_tests_properties(test-recurrent-state-rollback-nemotron-h PROPERTIES
-        FIXTURES_REQUIRED generate-models
-    )
-    llama_test(
-        test-recurrent-state-rollback
-        NAME test-recurrent-state-rollback-dsv4
-        LABEL main
-        ARGS -m "${MODEL_DIR}/deepseek4-moe.gguf"
-    )
-    set_tests_properties(test-recurrent-state-rollback-dsv4 PROPERTIES
         FIXTURES_REQUIRED generate-models
     )
 
