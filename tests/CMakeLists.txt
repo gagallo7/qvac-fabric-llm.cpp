@@ -325,6 +325,12 @@ if (GGML_METAL AND NOT GGML_BACKEND_DL)
     target_link_libraries(test-metal-graph-optimize PRIVATE ggml-metal)
 endif()
 
+llama_build_and_test(test-unified-memory-props.cpp)
+if (GGML_METAL)
+    # only a Metal build can enumerate a Metal device
+    target_compile_definitions(test-unified-memory-props PRIVATE LLAMA_TEST_EXPECT_METAL)
+endif()
+llama_build_and_test(test-fit-params.cpp)
 if (GGML_RPC)
     llama_build_and_test(test-rpc.cpp)
     set_tests_properties(test-rpc PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
