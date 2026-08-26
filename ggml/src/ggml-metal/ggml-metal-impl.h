@@ -31,6 +31,8 @@
 
 #define N_R0_Q4_0 4
 #define N_SG_Q4_0 2
+// glu holds 2 accs per row, so use fewer rows per simdgroup
+#define N_R0_Q4_0_GLU 1
 
 #define N_R0_Q4_1 4
 #define N_SG_Q4_1 2
@@ -116,7 +118,6 @@
 #define FC_SUM_ROWS                    1400
 #define FC_UPSCALE                     1500
 #define FC_GATED_DELTA_NET             1600
-#define FC_TOPK_MOE                    1700
 
 // op-specific constants
 #define OP_FLASH_ATTN_EXT_NQPSG 8
