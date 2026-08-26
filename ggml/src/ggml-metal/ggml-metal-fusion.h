@@ -41,6 +41,7 @@ typedef enum ggml_metal_fusion_id {
     GGML_METAL_FUSION_SSM_CONV_SILU, // SSM_CONV + UNARY (silu)
     GGML_METAL_FUSION_MUL_MV_GLU,   // MUL_MAT(_ID) up + gate + GLU (swiglu), single-token decode
     GGML_METAL_FUSION_MUL_MV_ID_MUL, // MUL_MAT_ID + MUL (routing weights), mat-vec path; yields to MOE_REDUCE
+    GGML_METAL_FUSION_UNARY_MUL,    // UNARY (silu/sigmoid/softplus) + MUL
 } ggml_metal_fusion_id;
 
 struct ggml_metal_fusion; // defined in ggml-metal-fusion.cpp
