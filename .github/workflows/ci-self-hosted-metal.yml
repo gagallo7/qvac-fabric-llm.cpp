@@ -56,4 +56,5 @@ jobs:
       - name: Test
         id: ggml-ci
         run: |
+          git lfs install
           GG_BUILD_METAL=1 bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
