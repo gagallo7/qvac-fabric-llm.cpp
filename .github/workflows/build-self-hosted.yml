@@ -88,6 +88,7 @@ jobs:
       - name: Test
         id: ggml-ci
         run: |
+          git lfs install
           nvidia-smi
           GG_BUILD_CUDA=1 CUDACXX=/usr/local/cuda/bin/nvcc bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
@@ -120,6 +121,7 @@ jobs:
         env:
           HIP_LAUNCH_BLOCKING: "1"
         run: |
+          git lfs install
           rocminfo
           GG_BUILD_ROCM=1 GG_BUILD_AMDGPU_TARGETS=gfx1151 bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
@@ -153,6 +155,7 @@ jobs:
       - name: Test
         id: ggml-ci
         run: |
+          git lfs install
           vulkaninfo --summary
           GG_BUILD_VULKAN=1 GGML_VK_DISABLE_COOPMAT2=1 bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
@@ -198,6 +201,7 @@ jobs:
       - name: Test
         id: ggml-ci
         run: |
+          git lfs install
           vulkaninfo --summary
           GG_BUILD_VULKAN=1 bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
@@ -255,6 +259,7 @@ jobs:
       - name: Test
         id: ggml-ci
         run: |
+          git lfs install
           GG_BUILD_WEBGPU=1 \
           GG_BUILD_WEBGPU_DAWN_PREFIX="$GITHUB_WORKSPACE/dawn" \
           GG_BUILD_WEBGPU_DAWN_DIR="$GITHUB_WORKSPACE/dawn/lib64/cmake/Dawn" \
@@ -327,6 +332,7 @@ jobs:
       - name: Test
         id: ggml-ci
         run: |
+          git lfs install
           GG_BUILD_METAL=1 bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
   gpu-webgpu-apple:
@@ -353,6 +359,7 @@ jobs:
       - name: Test
         id: ggml-ci
         run: |
+          git lfs install
           GG_BUILD_WEBGPU=1 GG_BUILD_WEBGPU_DAWN_PREFIX="$GITHUB_WORKSPACE/dawn" \
             bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
@@ -367,6 +374,7 @@ jobs:
       - name: Test
         id: ggml-ci
         run: |
+          git lfs install
           vulkaninfo --summary
           GG_BUILD_VULKAN=1 bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
@@ -383,6 +391,7 @@ jobs:
       - name: Test
         id: ggml-ci
         run: |
+          git lfs install
           vulkaninfo --summary
           GG_BUILD_VULKAN=1 bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
@@ -402,6 +411,7 @@ jobs:
           CHERE_INVOKING: 1
           PATH: C:\msys64\ucrt64\bin;C:\msys64\usr\bin;C:\Windows\System32;${{ env.PATH }}
         run: |
+          git lfs install
           vulkaninfo --summary
           # Skip python related tests with GG_BUILD_LOW_PERF=1 since Windows MSYS2 UCRT64 currently fails to create
           # a valid python environment for testing
@@ -436,6 +446,7 @@ jobs:
       - name: Test
         id: ggml-ci
         run: |
+          git lfs install
           source ./openvino_toolkit/setupvars.sh
           GG_BUILD_OPENVINO=1 GGML_OPENVINO_DEVICE=GPU GG_BUILD_LOW_PERF=1 bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
@@ -450,6 +461,7 @@ jobs:
       - name: Test
         id: ggml-ci
         run: |
+          git lfs install
           LLAMA_ARG_THREADS=$(nproc) GG_BUILD_HIGH_PERF=1 GG_BUILD_EXTRA_TESTS_0=1 bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
   cpu-arm64-high-perf-graviton4:
