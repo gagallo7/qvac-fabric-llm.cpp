@@ -60,7 +60,8 @@ env:
 
 jobs:
   gpu-cuda:
-    runs-on: "hf-jobs-t4-small:cuda13"
+    # runs-on: "hf-jobs-t4-small:cuda13"
+    runs-on: qvac-ubuntu2204-x64-gpu
 
     steps:
       - name: Clone
@@ -105,6 +106,7 @@ jobs:
           save: true
 
   gpu-rocm:
+    if: false  # QVAC-23796: no matching hardware
     runs-on: [self-hosted, Linux, AMD]
 
     steps:
@@ -127,7 +129,7 @@ jobs:
 
   gpu-vulkan-nvidia-cm:
     # runs-on: "hf-jobs-t4-small:ubuntu26_04"
-    runs-on: [self-hosted, Linux, NVIDIA]
+    runs-on: qvac-ubuntu2204-x64-gpu
 
     steps:
       - name: Clone
@@ -173,7 +175,7 @@ jobs:
 
   gpu-vulkan-nvidia-cm2:
     # runs-on: "hf-jobs-t4-small:ubuntu26_04"
-    runs-on: [self-hosted, Linux, NVIDIA, COOPMAT2]
+    runs-on: qvac-ubuntu2204-x64-gpu
 
     steps:
       - name: Clone
@@ -218,7 +220,8 @@ jobs:
       #     save: true
 
   gpu-webgpu-nvidia:
-    runs-on: "hf-jobs-t4-small:ubuntu26_04"
+    # runs-on: "hf-jobs-t4-small:ubuntu26_04"
+    runs-on: qvac-ubuntu2404-x64-gpu
 
     steps:
       - name: Clone
@@ -322,7 +325,7 @@ jobs:
   #         GG_BUILD_ROCM=1 GG_BUILD_AMDGPU_TARGETS="gfx1101" bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
   gpu-metal:
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: qvac-macos26-arm64-gpu
 
     steps:
       - name: Clone
@@ -336,7 +339,7 @@ jobs:
           GG_BUILD_METAL=1 bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
   gpu-webgpu-apple:
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: qvac-macos26-arm64-gpu
 
     steps:
       - name: Clone
@@ -364,7 +367,7 @@ jobs:
             bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
   gpu-vulkan-apple:
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: qvac-macos26-arm64-gpu
 
     steps:
       - name: Clone
@@ -379,6 +382,7 @@ jobs:
           GG_BUILD_VULKAN=1 bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
   gpu-vulkan-intel-linux:
+    if: false  # QVAC-23796: no matching hardware
     runs-on: [self-hosted, Linux, Intel]
 
     steps:
@@ -396,6 +400,7 @@ jobs:
           GG_BUILD_VULKAN=1 bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
   gpu-vulkan-intel-windows:
+    if: false  # QVAC-23796: no matching hardware
     runs-on: [self-hosted, Windows, X64, Intel]
 
     steps:
@@ -418,6 +423,7 @@ jobs:
           LLAMA_FATAL_WARNINGS=OFF GG_BUILD_NINJA=1 GG_BUILD_VULKAN=1 GG_BUILD_LOW_PERF=1 ./ci/run.sh ./results/llama.cpp ./mnt/llama.cpp
 
   gpu-openvino-low-perf:
+    if: false  # QVAC-23796: no matching hardware
     runs-on: [self-hosted, Linux, Intel, OpenVINO]
 
     env:
@@ -451,7 +457,7 @@ jobs:
           GG_BUILD_OPENVINO=1 GGML_OPENVINO_DEVICE=GPU GG_BUILD_LOW_PERF=1 bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
   cpu-x64-high-perf:
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: qvac-ubuntu2204-x64
 
     steps:
       - name: Clone
@@ -465,6 +471,7 @@ jobs:
           LLAMA_ARG_THREADS=$(nproc) GG_BUILD_HIGH_PERF=1 GG_BUILD_EXTRA_TESTS_0=1 bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
   cpu-arm64-high-perf-graviton4:
+    if: false  # QVAC-23796: no matching hardware
     runs-on: ah-ubuntu_24_04-c8g_8x
 
     steps:
@@ -511,6 +518,7 @@ jobs:
           bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
   cpu-arm64-graviton4-kleidiai:
+    if: false  # QVAC-23796: no matching hardware
     runs-on: ah-ubuntu_24_04-c8g_8x
 
     steps:
