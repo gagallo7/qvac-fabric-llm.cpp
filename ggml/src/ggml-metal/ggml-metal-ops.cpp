@@ -892,6 +892,11 @@ static int ggml_metal_op_try_unary_mul(ggml_metal_op_t ctx, int idx) {
         return 0;
     }
 
+    // mul(unary, unary) would read the unary result that the fusion skips
+    if (mul->src[0] == mul->src[1]) {
+        return 0;
+    }
+
     ggml_tensor * src0  = unary->src[0];
     ggml_tensor * other = (mul->src[0] == unary) ? mul->src[1] : mul->src[0];
     if (!src0 || !other) {
@@ -1842,6 +1847,11 @@ static int ggml_metal_op_try_topk_moe(ggml_metal_op_t ctx, int idx) {
         }
     }
 
+    // the kernel applies only the clamp min
+    if (with_norm && ggml_get_op_params_f32(clamp, 1) != std::numeric_limits<float>::infinity()) {
+        with_norm = false;
+    }
+
     if (!with_norm) {
         node_idx = gi + 5;
         clamp = nullptr;
@@ -1904,6 +1914,9 @@ static int ggml_metal_op_try_topk_moe(ggml_metal_op_t ctx, int idx) {
     if (softmax->src[1] || softmax->src[2]) {
         return 0;
     }
+    if (logits->ne[2] != 1 || logits->ne[3] != 1) {
+        return 0;
+    }
 
     float sm_scale = 1.0f;
     float max_bias = 0.0f;
@@ -1917,12 +1930,19 @@ static int ggml_metal_op_try_topk_moe(ggml_metal_op_t ctx, int idx) {
     if (!ggml_metal_topk_moe_n_experts_ok(n_experts)) {
         return 0;
     }
-    if (ids->nb[0] == 0 || (int) (ids->nb[1] / ids->nb[0]) != n_experts) {
+    if ((int) (ids->nb[1] / ggml_type_size(ids->type)) != n_experts) {
         return 0;
     }
 
     const int n_rows        = (int) logits->ne[1];
     const int n_expert_used = (int) weights->ne[1];
+
+    // the kernel writes n_rows rows of n_expert_used weights and ids
+    if (n_expert_used > n_experts ||
+            weights->ne[0] != 1 || (int) weights->ne[2] != n_rows || weights->ne[3] != 1 ||
+            (int) ids->ne[1] != n_rows || ids->ne[2] != 1 || ids->ne[3] != 1) {
+        return 0;
+    }
 
     float scale_val = scale ? ggml_get_op_params_f32(scale, 0) : 1.0f;
     float clamp_val = clamp ? ggml_get_op_params_f32(clamp, 0) : -std::numeric_limits<float>::infinity();
@@ -2259,6 +2279,8 @@ static int ggml_metal_op_try_mul_mv_glu(ggml_metal_op_t ctx, int idx) {
                     gate_up->ne[0] % 2 == 0) {
                 const int64_t n_ff = gate_up->ne[0] / 2;
                 if (v0->ne[0] == n_ff && v1->ne[0] == n_ff &&
+                        v0->ne[1] == gate_up->ne[1] && v0->ne[2] == gate_up->ne[2] && v0->ne[3] == gate_up->ne[3] &&
+                        v1->ne[1] == gate_up->ne[1] && v1->ne[2] == gate_up->ne[2] && v1->ne[3] == gate_up->ne[3] &&
                         v0->view_offs == 0 &&
                         v1->view_offs == (size_t) n_ff * gate_up->nb[0] &&
                         ggml_metal_mul_mv_glu_decode_ok(gate_up)) {
@@ -2297,6 +2319,11 @@ static int ggml_metal_op_try_mul_mv_id_mul(ggml_metal_op_t ctx, int idx) {
         return 0;
     }
 
+    // mul(mm, mm) would read the matvec result that the fusion skips
+    if (mul->src[0] == mul->src[1]) {
+        return 0;
+    }
+
     ggml_tensor * scale = (mul->src[0] == mm) ? mul->src[1] : mul->src[0];
     if (!scale || scale->type != GGML_TYPE_F32 || mul->type != GGML_TYPE_F32 || mm->type != GGML_TYPE_F32) {
         return 0;
@@ -2312,6 +2339,11 @@ static int ggml_metal_op_try_mul_mv_id_mul(ggml_metal_op_t ctx, int idx) {
         if (scale->ne[i] != 1 && scale->ne[i] != mul->ne[i]) {
             return 0;
         }
+    }
+
+    // the kernel reads scale after writing dst, so dst must not be able to alias scale (inplace mul)
+    if (ggml_are_same_layout(scale, mul)) {
+        return 0;
     }
 
     const ggml_metal_device_props * props = ggml_metal_device_get_props(ctx->dev);
@@ -2534,7 +2566,9 @@ int ggml_metal_op_ssm_conv(ggml_metal_op_t ctx, int idx) {
                 ggml_get_unary_op(gf->nodes[gi + 1]) == GGML_UNARY_OP_SILU &&
                 op->type == GGML_TYPE_F32 &&
                 gf->nodes[gi + 1]->type == GGML_TYPE_F32 &&
-                ggml_are_same_shape(op, gf->nodes[gi + 1])) {
+                ggml_are_same_shape(op, gf->nodes[gi + 1]) &&
+                // kernel indexes dst with the conv's nb
+                ggml_are_same_stride(op, gf->nodes[gi + 1])) {
             dst = gf->nodes[gi + 1];
             n_fuse = ctx->n_fuse_span(idx, n_graph_ops);
             apply_silu = 1;

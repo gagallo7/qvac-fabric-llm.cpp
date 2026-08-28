@@ -207,6 +207,9 @@ struct node_info {
 
     std::vector<ggml_tensor *> fused;
 
+    // outputs of the fused group other than dst() (e.g. the ids of a fused topk-moe)
+    std::vector<ggml_tensor *> extra_dsts;
+
     ggml_op op() const {
         return node->op;
     }
@@ -246,6 +249,12 @@ static std::vector<int> ggml_metal_graph_optimize_reorder(const std::vector<node
             }
         }
 
+        for (const auto * d : node.extra_dsts) {
+            if (!ggml_mem_ranges_add_dst(mrs, d)) {
+                return false;
+            }
+        }
+
         return ggml_mem_ranges_add_dst(mrs, node.dst());
     };
 
@@ -266,6 +275,12 @@ static std::vector<int> ggml_metal_graph_optimize_reorder(const std::vector<node
                         return false;
                     }
                 }
+            }
+        }
+
+        for (const auto * d : node.extra_dsts) {
+            if (!ggml_mem_ranges_check_dst(mrs, d)) {
+                return false;
             }
         }
 
@@ -391,23 +406,26 @@ static std::vector<int> ggml_metal_graph_optimize_reorder(const std::vector<node
 }
 
 // extra nodes to keep with gf->nodes[i] so later reorder cannot split a metal fusion
-static int ggml_metal_graph_optimize_pack(const ggml_cgraph * gf, int i) {
+// extra_dsts receives the outputs of the pack other than the last node (see node_info::extra_dsts)
+static int ggml_metal_graph_optimize_pack(const ggml_cgraph * gf, int i, std::vector<ggml_tensor *> & extra_dsts) {
     const int n = gf->n_nodes;
     ggml_tensor ** nodes = gf->nodes;
 
     if (nodes[i]->op == GGML_OP_SOFT_MAX) {
+        // keep in sync with ggml_metal_op_try_topk_moe
         static const ggml_op topk_ops[] = {
             GGML_OP_SOFT_MAX, GGML_OP_RESHAPE, GGML_OP_ARGSORT, GGML_OP_VIEW, GGML_OP_GET_ROWS,
             GGML_OP_RESHAPE, GGML_OP_SUM_ROWS, GGML_OP_CLAMP, GGML_OP_DIV, GGML_OP_RESHAPE,
             GGML_OP_SCALE,
         };
-        const int lens[] = { 11, 10, 5 };
+        const int lens[] = { 11, 10, 6, 5 };
         for (int n_ops : lens) {
             if (i + n_ops > n) {
                 continue;
             }
             const int outs[] = { i + 3, i + n_ops - 1 };
             if (ggml_can_fuse_subgraph(gf, i, n_ops, topk_ops, outs, 2)) {
+                extra_dsts.push_back(nodes[outs[0]]);
                 return n_ops - 1;
             }
         }
@@ -482,13 +500,14 @@ void ggml_graph_optimize(ggml_cgraph * gf) {
         node_info node = {
             /*.node =*/ gf->nodes[i],
             /*.fused =*/ {},
+            /*.extra_dsts =*/ {},
         };
 
         int n_extra = ggml_metal_fusion_max(gf, i) - 1;
 
         if (n_extra == 0) {
             // no table fusion starts here - try the downstream packing patterns
-            n_extra = ggml_metal_graph_optimize_pack(gf, i);
+            n_extra = ggml_metal_graph_optimize_pack(gf, i, node.extra_dsts);
         }
 
         // add the fused tensors into the node info so we can unfuse them later

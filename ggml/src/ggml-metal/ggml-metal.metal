@@ -8151,7 +8151,8 @@ static inline void topk_moe_softmax(thread float * vals, ushort lane) {
             vals[i] = val;
             sum += val;
         } else {
-            vals[i] = 0.f;
+            // keep pads below the -FLT_MAX that NaN logits become, so they are never selected
+            vals[i] = -INFINITY;
         }
     }
     sum = simd_sum(sum);
