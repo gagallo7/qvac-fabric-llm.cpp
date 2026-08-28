@@ -45,7 +45,8 @@ env:
 
 jobs:
   gpu-cuda:
-    runs-on: "hf-jobs-t4-small:cuda13"
+    # runs-on: "hf-jobs-t4-small:cuda13"
+    runs-on: qvac-ubuntu2204-x64-gpu
 
     steps:
       - name: Clone
@@ -90,6 +91,7 @@ jobs:
           save: true
 
   gpu-rocm:
+    if: false  # QVAC-23796: no matching hardware
     runs-on: [self-hosted, Linux, AMD]
 
     steps:

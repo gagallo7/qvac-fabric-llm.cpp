@@ -43,6 +43,7 @@ env:
 
 jobs:
   gpu-openvino-low-perf:
+    if: false  # QVAC-23796: no matching hardware
     runs-on: [self-hosted, Linux, Intel, OpenVINO]
 
     env:
