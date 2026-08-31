@@ -422,8 +422,10 @@ def allgpuinfo() -> list[str]:
 
 
 def gpuinfo(worktrees, models, options) -> list[tuple[int, str, str]]:
-    def split_devices(device_str: str) -> list[int]:
-        return [int(x) for x in device_str.split(",") if x.strip().isdigit()]
+    def split_devices(device_str: object) -> list[int]:
+        # parse_options() coerces numeric --option values to int, so this may not be a str;
+        # every other consumer of this option already wraps it in str().
+        return [int(x) for x in str(device_str).split(",") if x.strip().isdigit()]
 
     visible_devices = set()
 
