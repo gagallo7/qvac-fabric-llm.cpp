@@ -313,6 +313,12 @@ def build_parser():
         type=int,
         help="Number of warmup runs before measuring"
     )
+    p.add_argument(
+        "--models-dir",
+        type=Path,
+        help="Directory to look for models in (default: bench-workdir/models). "
+             "Files already present are reused; only missing ones are downloaded."
+    )
     p.add_argument("--clean-unused", action="store_true")
 
     return p
@@ -1247,7 +1253,7 @@ def bench_driver(
 ) -> None:
     WORKDIR.mkdir(exist_ok=True)
     RESULTS_DIR.mkdir(exist_ok=True)
-    MODELS_DIR.mkdir(exist_ok=True)
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
     IMAGES_DIR.mkdir(exist_ok=True)
 
     options = benchmark.default_options | options
@@ -1357,6 +1363,11 @@ def main() -> None:
         config = {}
 
     config = apply_overrides(config, args)
+
+    if args.models_dir:
+        global MODELS_DIR
+        MODELS_DIR = args.models_dir.expanduser().resolve()
+        log("driver", f"using models directory: {MODELS_DIR}")
 
     if "benchmark" not in config:
         raise ValueError("missing required config value: benchmark")
