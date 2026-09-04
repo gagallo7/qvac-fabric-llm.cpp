@@ -5895,6 +5895,7 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
                     case GGML_TYPE_MXFP4:
                     case GGML_TYPE_NVFP4:
                     case GGML_TYPE_Q2_K:
+                    case GGML_TYPE_TQ2_0:
                     case GGML_TYPE_Q3_K:
                     case GGML_TYPE_Q4_K:
                     case GGML_TYPE_Q5_K:
@@ -5919,9 +5920,13 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
             return op->src[0]->type == GGML_TYPE_F32 && op->src[1]->type == GGML_TYPE_F32 &&
                    op->src[2]->type == GGML_TYPE_I32 && op->type == GGML_TYPE_F32;
         case GGML_OP_MUL_MAT_ID_BACK_B:
-            return (op->src[0]->type == GGML_TYPE_F32 || op->src[0]->type == GGML_TYPE_Q8_0) &&
-                   op->src[1]->type == GGML_TYPE_F32 && op->src[2]->type == GGML_TYPE_I32 &&
-                   op->type == GGML_TYPE_F32;
+            {
+                const ggml_tensor * as = op->src[0];
+                const bool as_ok = as->type == GGML_TYPE_F32 || as->type == GGML_TYPE_Q8_0 ||
+                                   (ggml_is_contiguous(as) && ggml_get_to_fp32_cuda(as->type) != nullptr);
+                return as_ok && op->src[1]->type == GGML_TYPE_F32 && op->src[2]->type == GGML_TYPE_I32 &&
+                       op->type == GGML_TYPE_F32;
+            }
         case GGML_OP_OUT_PROD:
             {
                 // ggml_cuda_out_prod dequantizes any non-F32 src to F32 via ggml_get_to_fp32_cuda
@@ -5947,6 +5952,7 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
                     case GGML_TYPE_Q5_1:
                     case GGML_TYPE_Q8_0:
                     case GGML_TYPE_Q2_K:
+                    case GGML_TYPE_TQ2_0:
                     case GGML_TYPE_Q3_K:
                     case GGML_TYPE_Q4_K:
                     case GGML_TYPE_Q5_K:
@@ -5970,7 +5976,8 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
                 }
             }
         case GGML_OP_GET_ROWS_BACK:
-            return op->type == GGML_TYPE_F32 && op->src[0]->type == GGML_TYPE_F32 && op->ne[2] == 1 && op->ne[3] == 1;
+            return op->type == GGML_TYPE_F32 && op->src[0]->type == GGML_TYPE_F32 &&
+                   op->src[0]->nb[0] == sizeof(float);
         case GGML_OP_SET_ROWS:
             {
                 return (
@@ -6279,7 +6286,7 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
                     if (op->src[i] == nullptr || op->src[i]->type != GGML_TYPE_F32)
                         return false;
                 }
-                
+
                 const ggml_tensor * q     = op->src[0];
                 const ggml_tensor * k     = op->src[1];
                 const ggml_tensor * v     = op->src[2];
