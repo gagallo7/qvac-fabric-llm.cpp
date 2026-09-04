@@ -1442,7 +1442,7 @@ void ggml_backend_sched_split_graph(ggml_backend_sched_t sched, struct ggml_cgra
             // too far past the last offloading node.
             int fuse_end = i; // inclusive end index in graph
             // Persistent MoE cache preparation currently relies on one expert operation per split.
-            if (sched->prefetch_weights && need_new_split && sched->callback_moe_cache_resolve == NULL) {
+            if (sched->prefetch_weights && sched->copy_backends[node_backend_id] != NULL && need_new_split && sched->callback_moe_cache_resolve == NULL) {
                 const int max_lookahead = 8;
                 int last_offload_k = i;
                 for (int k = i + 1; k < graph->n_nodes; k++) {
@@ -1722,7 +1722,7 @@ void ggml_backend_sched_split_graph(ggml_backend_sched_t sched, struct ggml_cgra
 
         // prefetch double-buffer: reserve next split's weight copy memory BEFORE compute
         // so the allocator doesn't reuse it for intermediates in this split
-        if (sched->prefetch_weights && i + 1 < sched->n_splits) {
+        if (sched->prefetch_weights && sched->copy_backends[split->backend_id] != NULL && i + 1 < sched->n_splits) {
             struct ggml_backend_sched_split * next = &sched->splits[i + 1];
             if (next->backend_id == split->backend_id) {
                 for (int j = 0; j < next->n_inputs; j++) {
@@ -1769,7 +1769,7 @@ void ggml_backend_sched_split_graph(ggml_backend_sched_t sched, struct ggml_cgra
         }
 
         // extend current split's weight copies lifetime to here (after next's are allocated above)
-        if (sched->prefetch_weights) {
+        if (sched->prefetch_weights && sched->copy_backends[split->backend_id] != NULL) {
             for (int j = 0; j < split->n_inputs; j++) {
                 struct ggml_tensor * input = split->inputs[j];
                 if (input->buffer != NULL &&
@@ -1938,7 +1938,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
         prefetched_inputs.swap(next_prefetched_inputs);
         next_prefetched_inputs.clear();
 
-        if (sched->prefetch_weights) {
+        if (sched->prefetch_weights && sched->copy_backends[split_backend_id] != NULL) {
             ggml_backend_t copy_backend = sched->copy_backends[split_backend_id];
             if (copy_backend != NULL) {
                 // compute stream waits for previous prefetch to complete
@@ -2452,7 +2452,7 @@ void ggml_backend_sched_set_prefetch_weights(ggml_backend_sched_t sched, bool en
     GGML_ASSERT(sched);
     sched->prefetch_weights = enabled;
 
-    if (enabled) {
+    if (enabled && sched->n_backends == 2) {
         for (int b = 0; b < sched->n_backends; b++) {
             if (sched->copy_backends[b] != NULL) {
                 continue;
