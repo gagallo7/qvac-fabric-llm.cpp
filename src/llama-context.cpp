@@ -274,9 +274,10 @@ llama_context::llama_context(
         }
     }
 
-    cparams.op_offload     = params.op_offload;
-    cparams.kv_unified     = params.kv_unified;
-    cparams.moe_cache_size = params.moe_cache_size;
+    cparams.op_offload       = params.op_offload;
+    cparams.kv_unified       = params.kv_unified;
+    cparams.prefetch_weights = params.prefetch_weights;
+    cparams.moe_cache_size   = params.moe_cache_size;
 
     // initialized later
     cparams.pipeline_parallel = false;
@@ -667,8 +668,20 @@ void llama_context::sched_reserve() {
     gf_res_reserve.reset(new llm_graph_result(max_nodes));
     gf_res_prev_active = nullptr;
 
-    sched.reset(ggml_backend_sched_new(backend_ptrs.data(), backend_buft.data(), backend_ptrs.size(), max_nodes, cparams.pipeline_parallel, cparams.op_offload));
-    ggml_backend_sched_set_copy_callback(sched.get(), sched_copy_experts, this);
+    // the MoE cache uploads expert slices and slot maps through the copy callback,
+    // which a prefetched (full-tensor) weight copy would bypass
+    if (cparams.prefetch_weights && moe_cache) {
+        LLAMA_LOG_WARN("%s: prefetch_weights is not supported with the MoE cache, disabling\n", __func__);
+        cparams.prefetch_weights = false;
+    }
+
+    auto create_sched = [&](bool parallel) {
+        sched.reset(ggml_backend_sched_new(
+            backend_ptrs.data(), backend_buft.data(), backend_ptrs.size(), max_nodes, parallel, cparams.op_offload));
+        ggml_backend_sched_set_copy_callback(sched.get(), sched_copy_experts, this);
+        ggml_backend_sched_set_prefetch_weights(sched.get(), cparams.prefetch_weights);
+    };
+    create_sched(cparams.pipeline_parallel);
 
     llama_memory_context_ptr mctx;
     if (memory) {
@@ -707,8 +720,7 @@ void llama_context::sched_reserve() {
             if (cparams.pipeline_parallel) {
                 LLAMA_LOG_WARN("%s: compute buffer allocation failed, retrying without pipeline parallelism\n", __func__);
                 cparams.pipeline_parallel = false;
-                sched.reset(ggml_backend_sched_new(backend_ptrs.data(), backend_buft.data(), backend_ptrs.size(), max_nodes, false, cparams.op_offload));
-                ggml_backend_sched_set_copy_callback(sched.get(), sched_copy_experts, this);
+                create_sched(false);
                 gf = graph_reserve(n_tokens, n_seqs, n_outputs_pp, mctx.get());
             }
             if (!gf) {
@@ -4118,6 +4130,7 @@ llama_context_params llama_context_default_params() {
         /*.op_offload                  =*/ true,
         /*.swa_full                    =*/ true,
         /*.kv_unified                  =*/ false,
+        /*.prefetch_weights            =*/ false,
         /*.sampler                     =*/ nullptr,
         /*.n_sampler                   =*/ 0,
         /*.ctx_other                   =*/ nullptr,
