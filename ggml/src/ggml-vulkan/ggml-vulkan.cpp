@@ -9130,10 +9130,16 @@ static vk_matmul_pipeline ggml_vk_get_mul_mat_mat_pipeline(ggml_backend_vk_conte
             return nullptr;
     }
 
+    // Force F32 accumulation for TQ1/TQ2 to prevent NaN loss on Mali. Only
+    // there: the NaN loss was observed on Mali (lora finetuning), and f32acc
+    // runs at half the f16acc tensor rate on NVIDIA GeForce, so other vendors
+    // keep the default accumulator selection like upstream.
+    const bool tq_force_f32acc = (src0_type == GGML_TYPE_TQ1_0 || src0_type == GGML_TYPE_TQ2_0) &&
+                                 ctx->device->vendor_id == VK_VENDOR_ID_ARM;
+
     if (ctx->device->coopmat2) {
         vk_matmul_pipeline p;
-        // Force F32 accumulation for TQ1/TQ2 to prevent NaN loss
-        if (src0_type == GGML_TYPE_TQ1_0 || src0_type == GGML_TYPE_TQ2_0) {
+        if (tq_force_f32acc) {
             p = ctx->device->pipeline_dequant_mul_mat_mat_f16[src0_type].f32acc;
         } else {
             p = prec == GGML_PREC_DEFAULT
@@ -9152,12 +9158,12 @@ static vk_matmul_pipeline ggml_vk_get_mul_mat_mat_pipeline(ggml_backend_vk_conte
         }
     }
     if (ctx->device->coopmat_support) {
-        if (src0_type == GGML_TYPE_TQ1_0 || src0_type == GGML_TYPE_TQ2_0) {
+        if (tq_force_f32acc) {
             return ctx->device->pipeline_dequant_mul_mat_mat[src0_type].f32acc;
         }
         return (ctx->device->fp16 && ctx->device->coopmat_acc_f16_support && prec == GGML_PREC_DEFAULT) ? ctx->device->pipeline_dequant_mul_mat_mat[src0_type].f16acc : ctx->device->pipeline_dequant_mul_mat_mat[src0_type].f32acc;
     }
-    if (src0_type == GGML_TYPE_TQ1_0 || src0_type == GGML_TYPE_TQ2_0) {
+    if (tq_force_f32acc) {
         return ctx->device->pipeline_dequant_mul_mat_mat[src0_type].f32acc;
     }
     return (ctx->device->fp16 && prec == GGML_PREC_DEFAULT) ? ctx->device->pipeline_dequant_mul_mat_mat[src0_type].f16acc : ctx->device->pipeline_dequant_mul_mat_mat[src0_type].f32acc;
@@ -9338,7 +9344,9 @@ static vk_matmul_pipeline ggml_vk_get_mul_mat_mat_id_pipeline(ggml_backend_vk_co
     // XXX TODO 'prec' is not actually allowed in mul_mat_id.
     bool prefer_fp16acc = ctx->device->fp16 /*&& prec == GGML_PREC_DEFAULT*/;
 
-    if (src0_type == GGML_TYPE_TQ1_0 || src0_type == GGML_TYPE_TQ2_0) {
+    // Same Mali-only TQ f32acc forcing as in ggml_vk_get_mul_mat_mat_pipeline.
+    if ((src0_type == GGML_TYPE_TQ1_0 || src0_type == GGML_TYPE_TQ2_0) &&
+        ctx->device->vendor_id == VK_VENDOR_ID_ARM) {
         prefer_fp16acc = false;
     }
 
