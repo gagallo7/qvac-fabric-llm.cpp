@@ -1707,7 +1707,7 @@ bool llama_model::create_split_backend_buffers(
         const auto & [buft_split_idx, ctx_ptr] = *it;
         const auto & [buft, split_idx] = buft_split_idx;
         if (split_idx == idx) {
-            ml.ctx_map[buft] = std::move(it->second);
+            ml.ctx_map[llama_model_loader::ctx_key { buft, /*lazy =*/ false }] = std::move(it->second);
             it = ctx_split_map.erase(it);
         } else {
             ++it;
