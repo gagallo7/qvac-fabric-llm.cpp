@@ -16606,6 +16606,8 @@ static void ggml_vk_cross_entropy_loss(ggml_backend_vk_context * ctx, vk_context
     sp.ne01 = 1;
     sp.ne02 = 1;
     sp.weight = 1.0f;
+    // the tmp buffer is summed as a single row of nrows columns
+    sp.nrows = 1;
     init_pushconst_fastdiv(sp);
     sp.misalign_offsets = get_misalign_bytes(ctx, dst) / ggml_type_size(dst->type);
 
