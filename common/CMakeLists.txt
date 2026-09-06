@@ -71,6 +71,7 @@ set(${TARGET}_HEADERS
     http.h
     imatrix-loader.h
     json-schema-to-grammar.h
+    json.h
     log.h
     ngram-cache.h
     ngram-map.h
