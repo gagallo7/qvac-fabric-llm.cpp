@@ -18206,14 +18206,18 @@ static bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgr
     case GGML_OP_MUL_MAT_ID_BACK_B:
         ggml_vk_mul_mat_id_back_b(ctx, compute_ctx, src0, src1, src2, node);
 
+        break;
     case GGML_OP_DSV4_HC_COMB:
         ggml_vk_dsv4_hc_comb(ctx, compute_ctx, src0, src1, src2, node);
+
         break;
     case GGML_OP_DSV4_HC_PRE:
         ggml_vk_dsv4_hc_pre(ctx, compute_ctx, src0, src1, node);
+
         break;
     case GGML_OP_DSV4_HC_POST:
         ggml_vk_dsv4_hc_post(ctx, compute_ctx, src0, src1, src2, src3, node);
+
         break;
     case GGML_OP_CONCAT:
         ggml_vk_concat(ctx, compute_ctx, src0, src1, node);
