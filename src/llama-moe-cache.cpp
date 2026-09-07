@@ -229,7 +229,7 @@ struct llama_moe_cache::impl {
         if (model.split_mode() == LLAMA_SPLIT_MODE_TENSOR) {
             throw std::runtime_error("MoE cache does not support tensor parallelism");
         }
-        if (model.hparams.n_expert == 0 || model.hparams.n_expert_used == 0) {
+        if (model.hparams.n_expert == 0 || model.hparams.n_expert_used() == 0) {
             throw std::runtime_error("MoE cache requires routed experts");
         }
 
@@ -335,7 +335,7 @@ struct llama_moe_cache::impl {
             }
             n_slots = candidate;
         }
-        if (n_slots < int32_t(model.hparams.n_expert_used)) {
+        if (n_slots < int32_t(model.hparams.n_expert_used())) {
             throw std::runtime_error("MoE cache budget is smaller than one routed layer working set");
         }
         lru = llama_moe_cache_lru(model.layers.size(), model.hparams.n_expert, n_slots);
