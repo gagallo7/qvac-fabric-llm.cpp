@@ -136,7 +136,7 @@ struct mtmd_image_preprocessor_qwen3vl : mtmd_image_preprocessor {
           max_tiles(hparams.preproc_max_tiles > 0 ? hparams.preproc_max_tiles : 4) {
         GGML_ASSERT(clip_get_tile_mode(ctx) != CLIP_IMAGE_TILE_MODE_DISABLED);
     }
-    mtmd_image_preproc_out preprocess(const clip_image_u8 & img) override;
+    mtmd_image_preproc_out preprocess(const clip_image_u8 & img) const override;
 };
 
 // similar to mtmd_image_preprocessor_dyn_size, but resize the image to have longest edge equal to hparams.image_longest_edge, while preserving aspect ratio
