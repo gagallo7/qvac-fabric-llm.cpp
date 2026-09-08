@@ -458,9 +458,16 @@ int ggml_metal_try_gdn_cache_fusion(
     }
 
     // dst is the [D, n_seqs, n_written] cache view; require nb[1] == D (the per-seq stride the kernel assumes)
+    const bool dst_canonical =
+        dst->ne[0] == D && dst->ne[1] == n_seqs && dst->ne[2] == n_written && dst->ne[3] == 1 &&
+        dst->nb[1] == ggml_row_size(GGML_TYPE_F32, D);
+    // kimi-k3/kimi-linear write the same bytes through a flat [D*n_seqs] view; accept it so the
+    // match does not depend on n_seqs (reserve uses n_seq_max, decode the batch's real n_seqs)
+    const bool dst_flat =
+        K == 1 &&
+        dst->ne[0] == D * n_seqs && dst->ne[1] == 1 && dst->ne[2] == 1 && dst->ne[3] == 1;
     if (dst->op != GGML_OP_VIEW || dst->type != GGML_TYPE_F32 ||
-        dst->ne[0] != D || dst->ne[1] != n_seqs || dst->ne[2] != n_written || dst->ne[3] != 1 ||
-        dst->nb[0] != ggml_type_size(GGML_TYPE_F32) || dst->nb[1] != ggml_row_size(GGML_TYPE_F32, D)) {
+        dst->nb[0] != ggml_type_size(GGML_TYPE_F32) || (!dst_canonical && !dst_flat)) {
         return 0;
     }
 
