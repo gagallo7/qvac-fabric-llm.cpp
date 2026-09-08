@@ -22591,6 +22591,8 @@ static void ggml_vk_check_results_0(ggml_backend_vk_context * ctx, ggml_cgraph *
             tensor_clone = ggml_silu_back(ggml_ctx, src_clone[0], src_clone[1]);
         } else if (tensor->op == GGML_OP_GELU_BACK) {
             tensor_clone = ggml_gelu_back(ggml_ctx, src_clone[0], src_clone[1]);
+        } else if (tensor->op == GGML_OP_GEGLU_BACK) {
+            tensor_clone = ggml_geglu_back(ggml_ctx, src_clone[0], src_clone[1]);
         } else if (tensor->op == GGML_OP_SIGMOID_BACK) {
             tensor_clone = ggml_sigmoid_back(ggml_ctx, src_clone[0], src_clone[1]);
         } else if (tensor->op == GGML_OP_L2_NORM) {
