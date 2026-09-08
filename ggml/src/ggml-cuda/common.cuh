@@ -1538,6 +1538,7 @@ struct ggml_backend_cuda_context {
     ggml_cuda_pool & pool() {
         return pool(device);
     }
+
 };
 
 struct ggml_cuda_mm_fusion_args_host {
@@ -1552,6 +1553,7 @@ struct ggml_cuda_mm_fusion_args_host {
 struct ggml_cuda_mm_fusion_args_device {
     const void * x_bias = nullptr;
     const void * gate = nullptr;
+    const void * gate_scales_linear = nullptr;
     const void * gate_bias = nullptr;
     const void * x_scale = nullptr;
     const void * gate_scale = nullptr;
