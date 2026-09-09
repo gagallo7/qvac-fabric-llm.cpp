@@ -1,6 +1,7 @@
 #include "ggml-backend.h"
 #include "ggml-cpp.h"
 #include "ggml.h"
+#include "../ggml/src/ggml-impl.h"
 
 #include <algorithm>
 #include <chrono>
@@ -195,6 +196,7 @@ int main() {
     ggml_tensor * result_a = ggml_scale(ctx_a.get(), tensor_a, 2.0f);
     ggml_cgraph * graph    = ggml_new_graph_custom(ctx_a.get(), 16, false);
     ggml_build_forward_expand(graph, result_a);
+    graph->uid = 1; // nonzero uid: RPC client caches the graph so queued re-dispatches exercise GRAPH_RECOMPUTE
     ggml_cgraph * foreign_graph = ggml_new_graph_custom(ctx_a.get(), 1, false);
     ggml_graph_add_node(foreign_graph, tensor_a);
 
@@ -249,6 +251,7 @@ int main() {
     }
 
     std::vector<float> input(ggml_nelements(tensor_a));
+    std::vector<std::vector<float>> queued_results(8, std::vector<float>(ggml_nelements(result_a)));
     for (int iteration = 0; iteration < 8; iteration++) {
         ggml_backend_event_t event = events[iteration % 4];
         ggml_backend_event_synchronize(event);
@@ -257,9 +260,18 @@ int main() {
         if (ggml_backend_graph_compute_async(backend_a.get(), graph) != GGML_STATUS_SUCCESS) {
             return 1;
         }
+        ggml_backend_tensor_get_async(backend_a.get(), result_a, queued_results[iteration].data(), 0,
+                                      ggml_nbytes(result_a));
         ggml_backend_event_record(event, backend_a.get());
     }
     ggml_backend_synchronize(backend_a.get());
+
+    for (size_t iteration = 0; iteration < queued_results.size(); iteration++) {
+        if (!check_values(queued_results[iteration], 2.0f*iteration)) {
+            fprintf(stderr, "queued RPC graph/readback ordering failed at iteration %zu\n", iteration);
+            return 1;
+        }
+    }
 
     std::vector<float> result(ggml_nelements(result_a));
     ggml_backend_tensor_get(result_a, result.data(), 0, ggml_nbytes(result_a));
