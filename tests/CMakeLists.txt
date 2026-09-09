@@ -269,16 +269,28 @@ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
         FIXTURES_SETUP generate-models
     )
 
+    # The dummy-model decode tests below get no benefit from many threads, and a
+    # high thread count makes them collapse on shared CI runners: every graph node
+    # is a threadpool barrier that needs all n_threads scheduled, so under external
+    # CPU contention the wall time degrades superlinearly (measured: the save/load
+    # sweep at 32 threads goes from 41 s idle to ~50 s per model with one competing
+    # 32-thread load — >90 min for the sweep). The CI workflows export
+    # LLAMA_ARG_THREADS=$(nproc); the explicit -t below overrides the env var.
+
     # Test context state handling across all architectures, using the generated dummy models
     llama_test(
         test-llama-context
         LABEL main
-        ARGS --models "${MODEL_DIR}"
+        ARGS --models "${MODEL_DIR}" -t 4
     )
     # abort on graph reallocations that the initial reserve should have covered
+    # TIMEOUT is belt and braces for badly contended runners; the property also
+    # overrides the CTest default and the ctest --timeout values passed by the
+    # workflow jobs.
     set_tests_properties(test-llama-context PROPERTIES
         FIXTURES_REQUIRED generate-models
         ENVIRONMENT "GGML_SCHED_DEBUG_REALLOC=1"
+        TIMEOUT 3600
     )
 
     llama_build(test-fusion.cpp)
