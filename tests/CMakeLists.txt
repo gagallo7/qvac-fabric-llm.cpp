@@ -237,11 +237,19 @@ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
         FIXTURES_SETUP generate-models
     )
 
+    # The dummy-model decode tests below get no benefit from many threads, and a
+    # high thread count makes them collapse on shared CI runners: every graph node
+    # is a threadpool barrier that needs all n_threads scheduled, so under external
+    # CPU contention the wall time degrades superlinearly (measured: the save/load
+    # sweep at 32 threads goes from 41 s idle to ~50 s per model with one competing
+    # 32-thread load — >90 min for the sweep). The CI workflows export
+    # LLAMA_ARG_THREADS=$(nproc); the explicit -t below overrides the env var.
+
     # Test recurrent-state rollback across all architectures, using the generated dummy models
     llama_test(
         test-recurrent-state-rollback
         LABEL main
-        ARGS --models "${MODEL_DIR}"
+        ARGS --models "${MODEL_DIR}" -t 4
     )
     set_tests_properties(test-recurrent-state-rollback PROPERTIES FIXTURES_REQUIRED generate-models)
 
@@ -249,9 +257,11 @@ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
     llama_test(
         test-save-load-state
         LABEL main
-        ARGS --models "${MODEL_DIR}"
+        ARGS --models "${MODEL_DIR}" -t 4
     )
-    set_tests_properties(test-save-load-state PROPERTIES FIXTURES_REQUIRED generate-models)
+    # Belt and braces for badly contended runners; the property also overrides the
+    # CTest default and the ctest --timeout values passed by the workflow jobs.
+    set_tests_properties(test-save-load-state PROPERTIES FIXTURES_REQUIRED generate-models TIMEOUT 3600)
 
     llama_build(test-fusion.cpp)
 
