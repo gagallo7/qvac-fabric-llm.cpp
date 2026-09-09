@@ -237,12 +237,20 @@ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
         FIXTURES_SETUP generate-models
     )
 
+    # The dummy-model decode tests below get no benefit from many threads, and a
+    # high thread count makes them collapse on shared CI runners: every graph node
+    # is a threadpool barrier that needs all n_threads scheduled, so under external
+    # CPU contention the wall time degrades superlinearly (measured: the save/load
+    # sweep at 32 threads goes from 41 s idle to ~50 s per model with one competing
+    # 32-thread load — >90 min for the sweep). The CI workflows export
+    # LLAMA_ARG_THREADS=$(nproc); the explicit -t below overrides the env var.
+
     # WebGPU excludes QWEN35 and DEEPSEEK4 in arch_supported() (test-llama-archs.cpp)
     if (NOT GGML_WEBGPU)
         llama_test(
             test-recurrent-state-rollback
             LABEL main
-            ARGS -m "${MODEL_DIR}/qwen35-dense.gguf"
+            ARGS -m "${MODEL_DIR}/qwen35-dense.gguf" -t 4
         )
         set_tests_properties(test-recurrent-state-rollback PROPERTIES
             FIXTURES_REQUIRED generate-models
@@ -251,7 +259,7 @@ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
             test-recurrent-state-rollback
             NAME test-recurrent-state-rollback-dsv4
             LABEL main
-            ARGS -m "${MODEL_DIR}/deepseek4-moe.gguf"
+            ARGS -m "${MODEL_DIR}/deepseek4-moe.gguf" -t 4
         )
         set_tests_properties(test-recurrent-state-rollback-dsv4 PROPERTIES
             FIXTURES_REQUIRED generate-models
@@ -262,7 +270,7 @@ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
         test-recurrent-state-rollback
         NAME test-recurrent-state-rollback-nemotron-h
         LABEL main
-        ARGS -m "${MODEL_DIR}/nemotron_h-dense.gguf"
+        ARGS -m "${MODEL_DIR}/nemotron_h-dense.gguf" -t 4
     )
     set_tests_properties(test-recurrent-state-rollback-nemotron-h PROPERTIES
         FIXTURES_REQUIRED generate-models
@@ -281,9 +289,11 @@ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
     llama_test(
         test-save-load-state
         LABEL main
-        ARGS --models "${MODEL_DIR}"
+        ARGS --models "${MODEL_DIR}" -t 4
     )
-    set_tests_properties(test-save-load-state PROPERTIES FIXTURES_REQUIRED generate-models)
+    # Belt and braces for badly contended runners; the property also overrides the
+    # CTest default and the ctest --timeout values passed by the workflow jobs.
+    set_tests_properties(test-save-load-state PROPERTIES FIXTURES_REQUIRED generate-models TIMEOUT 3600)
 
     llama_build(test-fusion.cpp)
 
