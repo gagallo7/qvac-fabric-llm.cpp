@@ -359,6 +359,7 @@ if (GGML_METAL AND NOT GGML_BACKEND_DL)
     target_link_libraries(test-metal-graph-optimize PRIVATE ggml-metal)
 endif()
 
+llama_build_and_test(test-gdn-continuation.cpp)
 llama_build_and_test(test-unified-memory-props.cpp)
 if (GGML_METAL)
     # only a Metal build can enumerate a Metal device
