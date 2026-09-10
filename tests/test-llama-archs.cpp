@@ -45,18 +45,21 @@ static void set_tensor_data(struct ggml_tensor * tensor, void * userdata) {
     seed ^= hasher(tensor->name);
     std::mt19937 gen(seed);
     std::normal_distribution<float> dis(0.0f, 1.0e-2f);
+    // Keep MPT's activation divisors away from zero to avoid FP16 overflow.
+    std::uniform_real_distribution<float> dis_scale(0.5f, 1.5f);
+    const bool is_act_scale = string_ends_with(tensor->name, ".ffn.act.scales");
 
     const int64_t ne = ggml_nelements(tensor);
     if (tensor->type == GGML_TYPE_F32) {
         std::vector<float> tmp(ne);
         for (int64_t i = 0; i < ne; i++) {
-            tmp[i] = dis(gen);
+            tmp[i] = is_act_scale ? dis_scale(gen) : dis(gen);
         }
         ggml_backend_tensor_set(tensor, tmp.data(), 0, ggml_nbytes(tensor));
     } else if (tensor->type == GGML_TYPE_F16) {
         std::vector<ggml_fp16_t> tmp(ne);
         for (int64_t i = 0; i < ne; i++) {
-            tmp[i] = ggml_fp32_to_fp16(dis(gen));
+            tmp[i] = ggml_fp32_to_fp16(is_act_scale ? dis_scale(gen) : dis(gen));
         }
         ggml_backend_tensor_set(tensor, tmp.data(), 0, ggml_nbytes(tensor));
     } else {
