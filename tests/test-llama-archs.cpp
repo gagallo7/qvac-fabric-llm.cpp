@@ -60,6 +60,9 @@ static void set_tensor_data(struct ggml_tensor * tensor, void * userdata) {
     seed ^= hasher(tensor->name);
     std::mt19937 gen(seed);
     std::normal_distribution<float> dis(0.0f, params.stdev);
+    // Keep MPT's activation divisors away from zero to avoid FP16 overflow.
+    std::uniform_real_distribution<float> dis_scale(0.5f, 1.5f);
+    const bool is_act_scale = string_ends_with(tensor->name, ".ffn.act.scales");
 
     // TODO: refactor per-tensor initialization logic in a cleaner way
 
@@ -69,14 +72,14 @@ static void set_tensor_data(struct ggml_tensor * tensor, void * userdata) {
     if (tensor->type == GGML_TYPE_F32) {
         std::vector<float> tmp(ne);
         for (int64_t i = 0; i < ne; i++) {
-            float val = dis(gen);
+            float val = is_act_scale ? dis_scale(gen) : dis(gen);
             tmp[i] = is_ssm_a ? -fabsf(val) : val;
         }
         ggml_backend_tensor_set(tensor, tmp.data(), 0, ggml_nbytes(tensor));
     } else if (tensor->type == GGML_TYPE_F16) {
         std::vector<ggml_fp16_t> tmp(ne);
         for (int64_t i = 0; i < ne; i++) {
-            float val = dis(gen);
+            float val = is_act_scale ? dis_scale(gen) : dis(gen);
             tmp[i] = ggml_fp32_to_fp16(is_ssm_a ? -fabsf(val) : val);
         }
         ggml_backend_tensor_set(tensor, tmp.data(), 0, ggml_nbytes(tensor));
