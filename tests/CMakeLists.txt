@@ -255,6 +255,10 @@ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
     # TODO: after `test-llama-archs` is refactored to not link internal symbols, we can move all related tests out of
     #       this branch and run them on all platforms
     llama_build(test-llama-archs.cpp)
+    llama_test(test-llama-archs NAME test-mtp-shared-cpu ARGS --mtp-shared-cpu)
+    if (GGML_CUDA)
+        llama_test(test-llama-archs NAME test-mtp-shared ARGS --mtp-shared)
+    endif()
 
     set(MODEL_DIR "${CMAKE_CURRENT_BINARY_DIR}/test-models/")
     file(MAKE_DIRECTORY "${MODEL_DIR}")
