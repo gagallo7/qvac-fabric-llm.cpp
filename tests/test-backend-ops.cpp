@@ -7304,6 +7304,7 @@ struct test_topk_moe : public test_case {
     const bool bias_probs;
     const MoeGatingFunc gating_func;
     const float scale_w;
+    ggml_tensor * logits {};
     ggml_tensor * weights {};
     ggml_tensor * selected_experts {};
 
@@ -7335,7 +7336,7 @@ struct test_topk_moe : public test_case {
         const int n_expert = ne[0];
         const int n_tokens = ne[1];
 
-        ggml_tensor * logits = ggml_new_tensor(ctx, GGML_TYPE_F32, 4, ne.data());
+        logits = ggml_new_tensor(ctx, GGML_TYPE_F32, 4, ne.data());
         ggml_tensor * probs            =
             (gating_func == GATING_FUNC_SOFTMAX) ? ggml_soft_max(ctx, logits) :
             (gating_func == GATING_FUNC_SIGMOID) ? ggml_sigmoid(ctx, logits) :
@@ -7379,6 +7380,21 @@ struct test_topk_moe : public test_case {
         ggml_set_name(weights, "weights");
         return weights;
     }
+
+    void initialize_tensors(ggml_context * ctx) override {
+        test_case::initialize_tensors(ctx);
+        std::default_random_engine rng(std::random_device{}());
+        std::vector<float> data(ne[0]);
+        // Separate logits so rounding in the gating function does not create top-k ties.
+        for (int64_t i = 0; i < ne[0]; i++) {
+            data[i] = -1.0f + 2.0f * i / ne[0];
+        }
+        for (int64_t r = 0; r < ggml_nrows(logits); r++) {
+            std::shuffle(data.begin(), data.end(), rng);
+            ggml_backend_tensor_set(logits, data.data(), r * logits->nb[1], data.size() * sizeof(float));
+        }
+    }
+
     // Verify two outputs
     std::vector<ggml_tensor *> fusion_test_nodes() override { return { selected_experts, weights }; }
 
