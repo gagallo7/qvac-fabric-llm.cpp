@@ -6855,7 +6855,8 @@ static ggml_backend_opencl_context * ggml_cl_init(ggml_backend_dev_t dev) {
         }
         return (int64_t) v;
     };
-    backend_ctx->flush_work_budget = parse_env_i64("GGML_OPENCL_FLUSH_WORK_MB", 512, INT64_MAX >> 20) * (1ll << 20);
+    // Default 64 GB. 512 MB was below a single prefill MUL_MAT, so every node flushed.
+    backend_ctx->flush_work_budget = parse_env_i64("GGML_OPENCL_FLUSH_WORK_MB", 64 * 1024, INT64_MAX >> 20) * (1ll << 20);
     backend_ctx->fa_max_nq         = (int) parse_env_i64("GGML_OPENCL_FA_MAX_NQ", 4096, INT32_MAX);
     GGML_LOG_INFO("ggml_opencl: flush work budget: %lld MB (0 = disabled)\n",
                   (long long) (backend_ctx->flush_work_budget >> 20));
@@ -8412,13 +8413,8 @@ static ggml_status ggml_backend_opencl_graph_compute(ggml_backend_t backend, ggm
     // Ultra / Adreno 830. Flushing whenever the estimated enqueued work
     // exceeds flush_work_budget hands the driver bounded batches instead.
     // Gating on WORK (not a node count) scales the flush cadence to the batch
-    // size: the ~48 s encode flushes many times, while a per-token LLM decode
-    // (its work ~= the model size streamed once, i.e. a few flushes per token
-    // at the default budget for a multi-GB model) is far lighter. clFlush only
-    // submits (no host stall), so the decode-path cost is negligible in
-    // practice (measured GPU decode TPS within noise of pre-hardening), but it
-    // is NOT literally zero for large models — raise flush_work_budget past the
-    // model size, or set it to 0, to make decode fully submission-free.
+    // size. Keep the budget above a single prefill MUL_MAT so decode does not
+    // flush; set to 0 to disable. clFlush only submits (no host stall).
     int64_t work_since_flush = 0;
 
     for (int i = 0; i < cgraph->n_nodes; i++) {
