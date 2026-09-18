@@ -4927,9 +4927,6 @@ static void ggml_compute_forward_l2_norm_back_f32(
 
     GGML_ASSERT(ggml_are_same_shape(src0, dst) && ggml_are_same_shape(src0, src1));
 
-    GGML_ASSERT(src0->nb[0] == sizeof(float));
-    GGML_ASSERT(src1->nb[0] == sizeof(float));
-
     const int ith = params->ith;
     const int nth = params->nth;
 
@@ -4946,30 +4943,35 @@ static void ggml_compute_forward_l2_norm_back_f32(
     for (int64_t i03 = 0; i03 < ne03; i03++) {
         for (int64_t i02 = 0; i02 < ne02; i02++) {
             for (int64_t i01 = ith; i01 < ne01; i01 += nth) {
-                const float * dy = (float *) ((char *) src0->data + i01*nb01 + i02*nb02 + i03*nb03);
-                const float * x  = (float *) ((char *) src1->data + i01*nb11 + i02*nb12 + i03*nb13);
+                const char * dy = (const char *) src0->data + i01*nb01 + i02*nb02 + i03*nb03;
+                const char * x  = (const char *) src1->data + i01*nb11 + i02*nb12 + i03*nb13;
 
                 ggml_float sum_xx  = 0.0;
                 ggml_float sum_xdy = 0.0;
                 for (int64_t i00 = 0; i00 < ne00; i00++) {
-                    sum_xx  += (ggml_float)(x[i00] * x[i00]);
-                    sum_xdy += (ggml_float)(x[i00] * dy[i00]);
+                    const float xi  = *(const float *) (x  + i00*nb10);
+                    const float dyi = *(const float *) (dy + i00*nb00);
+                    sum_xx  += (ggml_float)(xi * xi);
+                    sum_xdy += (ggml_float)(xi * dyi);
                 }
 
                 const float norm = sqrtf((float) sum_xx);
 
-                float * dx = (float *) ((char *) dst->data + i01*nb1 + i02*nb2 + i03*nb3);
+                char * dx = (char *) dst->data + i01*nb1 + i02*nb2 + i03*nb3;
 
                 if (norm > eps) {
                     const float scale   = 1.0f / norm;
                     const float scale_x = -scale*scale*scale * (float) sum_xdy;
                     for (int64_t i00 = 0; i00 < ne00; i00++) {
-                        dx[i00] = scale*dy[i00] + scale_x*x[i00];
+                        const float xi  = *(const float *) (x  + i00*nb10);
+                        const float dyi = *(const float *) (dy + i00*nb00);
+                        *(float *) (dx + i00*nb0) = scale*dyi + scale_x*xi;
                     }
                 } else {
                     const float scale = 1.0f / eps;
                     for (int64_t i00 = 0; i00 < ne00; i00++) {
-                        dx[i00] = scale*dy[i00];
+                        const float dyi = *(const float *) (dy + i00*nb00);
+                        *(float *) (dx + i00*nb0) = scale*dyi;
                     }
                 }
             }
