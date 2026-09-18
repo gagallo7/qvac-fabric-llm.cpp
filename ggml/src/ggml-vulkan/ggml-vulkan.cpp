@@ -20876,9 +20876,9 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                 if (op->src[3] && op->src[3]->type != GGML_TYPE_F16) {
                     return false;
                 }
-                // K/V type validation: HEAD's quant-KV list (Q4_0/Q4_1/Q5_0/Q5_1/Q8_0
-                // on every path, Q1_0 on coopmat2) plus TBQ/PQ (mixed K/V: TBQ/PQ on K,
-                // Q4_0/Q8_0/F16/PQ on V). The per-K-type allow-list below is the gate.
+                // K/V type validation. Plain K/V follows HEAD: any pair from the
+                // quant-KV list, BF16 only paired with BF16. TBQ/PQ is the fork's
+                // and mixes more narrowly (TBQ/PQ on K, Q4_0/Q8_0/F16/PQ on V).
                 const ggml_type k_type = op->src[1]->type;
                 const ggml_type v_type = op->src[2]->type;
                 auto valid_tq_head_dim = [](ggml_type type, uint32_t head_dim) {
@@ -20890,66 +20890,58 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
                 if (!valid_tq_head_dim(k_type, HSK) || !valid_tq_head_dim(v_type, HSV)) {
                     return false;
                 }
-                if ((ggml_is_tbq_or_pq(k_type) || ggml_is_tbq_or_pq(v_type)) && !device->fp16) {
-                    // TBQ/PQ FA shaders are fp16-only; reject so the scheduler falls back to CPU.
-                    return false;
-                }
-                {
-                    auto any = [](ggml_type t, std::initializer_list<ggml_type> s) {
-                        return std::any_of(s.begin(), s.end(), [t](ggml_type v) { return v == t; });
-                    };
-                    auto is_fa_mixed_v = [&](ggml_type t) {
-                        return any(t, { GGML_TYPE_PQ3_0, GGML_TYPE_PQ4_0,
-                                        GGML_TYPE_PQ3_0_64, GGML_TYPE_PQ4_0_64,
-                                        GGML_TYPE_Q4_0, GGML_TYPE_Q8_0, GGML_TYPE_F16 });
-                    };
-
-                    if (k_type != v_type &&
-                        (!ggml_is_tbq_or_pq(k_type) || ggml_is_tbq(v_type) || !is_fa_mixed_v(v_type) ||
-                         (ggml_is_tbq_or_pq(v_type) &&
-                          ggml_is_tbq_or_pq_64(k_type) != ggml_is_tbq_or_pq_64(v_type)) ||
-                         !(device->subgroup_shuffle && device->subgroup_vote))) {
+                if (ggml_is_tbq_or_pq(k_type) || ggml_is_tbq_or_pq(v_type)) {
+                    if (!device->fp16) {
+                        // TBQ/PQ FA shaders are fp16-only; reject so the scheduler falls back to CPU.
                         return false;
                     }
-                }
-                switch (k_type) {
-                    case GGML_TYPE_F16:
-                    case GGML_TYPE_F32:
-                    case GGML_TYPE_Q4_0:
-                    case GGML_TYPE_Q8_0:
-                    case GGML_TYPE_TBQ3_0:
-                    case GGML_TYPE_PQ3_0:
-                    case GGML_TYPE_TBQ4_0:
-                    case GGML_TYPE_PQ4_0:
-                    case GGML_TYPE_TBQ3_0_64:
-                    case GGML_TYPE_PQ3_0_64:
-                    case GGML_TYPE_TBQ4_0_64:
-                    case GGML_TYPE_PQ4_0_64:
-                        break;
-                    case GGML_TYPE_Q4_1:
-                    case GGML_TYPE_Q5_0:
-                    case GGML_TYPE_Q5_1:
-                    // K dequants currently disabled because D dimension is rounded up to 256 and runs inefficiently
-                    //case GGML_TYPE_Q2_K:
-                    //case GGML_TYPE_Q3_K:
-                    //case GGML_TYPE_Q4_K:
-                    //case GGML_TYPE_Q5_K:
-                    //case GGML_TYPE_Q6_K:
-                    //case GGML_TYPE_IQ1_S:
-                    //case GGML_TYPE_IQ1_M:
-                    //case GGML_TYPE_IQ2_XXS:
-                    //case GGML_TYPE_IQ2_XS:
-                    //case GGML_TYPE_IQ2_S:
-                    //case GGML_TYPE_IQ3_XXS:
-                    //case GGML_TYPE_IQ3_S:
-                    //case GGML_TYPE_IQ4_XS:
-                    case GGML_TYPE_IQ4_NL:
-                        if (!coopmat2) {
+                    // K carries the TBQ/PQ quant, never V alone.
+                    if (!ggml_is_tbq_or_pq(k_type)) {
+                        return false;
+                    }
+                    if (k_type != v_type) {
+                        auto any = [](ggml_type t, std::initializer_list<ggml_type> s) {
+                            return std::any_of(s.begin(), s.end(), [t](ggml_type v) { return v == t; });
+                        };
+                        auto is_fa_mixed_v = [&](ggml_type t) {
+                            return any(t, { GGML_TYPE_PQ3_0, GGML_TYPE_PQ4_0,
+                                            GGML_TYPE_PQ3_0_64, GGML_TYPE_PQ4_0_64,
+                                            GGML_TYPE_Q4_0, GGML_TYPE_Q8_0, GGML_TYPE_F16 });
+                        };
+                        if (ggml_is_tbq(v_type) || !is_fa_mixed_v(v_type)) {
                             return false;
                         }
-                        break;
-                    default:
+                        if (ggml_is_tbq_or_pq(v_type) &&
+                            ggml_is_tbq_or_pq_64(k_type) != ggml_is_tbq_or_pq_64(v_type)) {
+                            return false;
+                        }
+                        if (!(device->subgroup_shuffle && device->subgroup_vote)) {
+                            return false;
+                        }
+                    }
+                } else {
+                    auto fa_kv_ok = [](ggml_type t) {
+                        switch (t) {
+                        case GGML_TYPE_F32:
+                        case GGML_TYPE_F16:
+                        case GGML_TYPE_BF16:
+                        case GGML_TYPE_Q8_0:
+                        case GGML_TYPE_Q5_1:
+                        case GGML_TYPE_Q5_0:
+                        case GGML_TYPE_Q4_1:
+                        case GGML_TYPE_Q4_0:
+                        case GGML_TYPE_IQ4_NL:
+                            return true;
+                        default:
+                            return false;
+                        }
+                    };
+                    if (!fa_kv_ok(k_type) || !fa_kv_ok(v_type)) {
                         return false;
+                    }
+                    if ((k_type == GGML_TYPE_BF16) != (v_type == GGML_TYPE_BF16)) {
+                        return false;
+                    }
                 }
                 if (!coopmat2 && !(device->subgroup_shuffle && device->subgroup_vote)) {
                     // scalar/coopmat1 FA uses subgroupShuffle/subgroupAll
