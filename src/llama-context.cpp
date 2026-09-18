@@ -2593,7 +2593,7 @@ public:
         size_written += size;
     }
 
-    void write_tensor(const ggml_tensor * /* tensor */, size_t /* offset */, size_t size) override {
+    void write_tensor(ggml_tensor * /* tensor */, size_t /* offset */, size_t size) override {
         if (skip_tensors) {
             return;
         }
@@ -2633,7 +2633,7 @@ public:
         buf_size -= size;
     }
 
-    void write_tensor(const ggml_tensor * tensor, size_t offset, size_t size) override {
+    void write_tensor(ggml_tensor * tensor, size_t offset, size_t size) override {
         if (size > buf_size) {
             throw std::runtime_error("unexpectedly reached end of buffer");
         }
@@ -2730,7 +2730,7 @@ public:
         size_written += size;
     }
 
-    void write_tensor(const ggml_tensor * tensor, size_t offset, size_t size) override {
+    void write_tensor(ggml_tensor * tensor, size_t offset, size_t size) override {
         temp_buffer.resize(size);
         ggml_backend_tensor_get(tensor, temp_buffer.data(), offset, size);
         write(temp_buffer.data(), temp_buffer.size());
@@ -2878,7 +2878,7 @@ public:
         buf_size -= size;
     }
 
-    void write_tensor(const ggml_tensor * tensor, size_t offset, size_t size) override {
+    void write_tensor(ggml_tensor * tensor, size_t offset, size_t size) override {
         // save the write for later during destruction; ggml_view_1d() needs a mutable tensor
         winfos.push_back({const_cast<ggml_tensor *>(tensor), ptr, size, offset});
     }
