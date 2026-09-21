@@ -12882,7 +12882,7 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
     test_cases.emplace_back(new test_moe_weighted_reduction(2048, 16, 32, false, true));
 
     // Split scheduling threshold, partial chunks, and multi-sequence fallback.
-    for (int tokens : {2047, 2048, 2049, 4097}) {
+    for (int tokens : {2047, 2048, 2049, 4096}) {
         test_cases.emplace_back(new test_gated_delta_net_precision(2, tokens));
     }
     test_cases.emplace_back(new test_gated_delta_net_precision(2, 2048, 1.0f, 1.0f, -0.01f, -0.03f, 2));
