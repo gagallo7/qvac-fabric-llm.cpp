@@ -40,7 +40,13 @@ env:
   CTEST_EXCLUDE: "test-llama-archs|^test-recurrent-state-rollback"
 
 jobs:
+  authorize:
+    permissions: {}
+    uses: ./.github/workflows/reusable-authorize-self-hosted.yml
+
   ubuntu-24-openvino:
+    needs: authorize
+    if: needs.authorize.outputs.allowed == 'true'
     runs-on: [self-hosted, Linux, Intel, OpenVINO]
 
     env:
