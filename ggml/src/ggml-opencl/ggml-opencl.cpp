@@ -934,8 +934,6 @@ struct ggml_backend_opencl_context {
     cl_program program_sub;
     cl_program program_norm;
     cl_program program_relu;
-    cl_program program_hardsigmoid;
-    cl_program program_hardswish;
     cl_program program_pool_2d;
     cl_program program_rms_norm;
     cl_program program_group_norm;
@@ -979,8 +977,6 @@ struct ggml_backend_opencl_context {
     cl_kernel kernel_gelu_erf, kernel_gelu_erf_4;
     cl_kernel kernel_gelu_quick, kernel_gelu_quick_4;
     cl_kernel kernel_relu;
-    cl_kernel kernel_hardsigmoid_f32;
-    cl_kernel kernel_hardswish_f32;
     cl_kernel kernel_pool_2d_f32;
     cl_kernel kernel_sigmoid_f32, kernel_sigmoid_f16;
     cl_kernel kernel_tri;
@@ -3159,38 +3155,6 @@ static void load_cl_kernels(ggml_backend_opencl_context *backend_ctx) {
             build_program_from_source(backend_ctx, kernel_src.c_str(), compile_opts);
 
         CL_CHECK((backend_ctx->kernel_relu = clCreateKernel(backend_ctx->program_relu, "kernel_relu", &err), err));
-        GGML_LOG_CONT(".");
-    }
-
-    // hardsigmoid
-    {
-#ifdef GGML_OPENCL_EMBED_KERNELS
-        const std::string kernel_src {
-            #include "hardsigmoid.cl.h"
-        };
-#else
-        const std::string kernel_src = read_file("hardsigmoid.cl");
-#endif
-        backend_ctx->program_hardsigmoid =
-            build_program_from_source(backend_ctx, kernel_src.c_str(), compile_opts);
-
-        CL_CHECK((backend_ctx->kernel_hardsigmoid_f32 = clCreateKernel(backend_ctx->program_hardsigmoid, "kernel_hardsigmoid_f32", &err), err));
-        GGML_LOG_CONT(".");
-    }
-
-    // hardswish
-    {
-#ifdef GGML_OPENCL_EMBED_KERNELS
-        const std::string kernel_src {
-            #include "hardswish.cl.h"
-        };
-#else
-        const std::string kernel_src = read_file("hardswish.cl");
-#endif
-        backend_ctx->program_hardswish =
-            build_program_from_source(backend_ctx, kernel_src.c_str(), compile_opts);
-
-        CL_CHECK((backend_ctx->kernel_hardswish_f32 = clCreateKernel(backend_ctx->program_hardswish, "kernel_hardswish_f32", &err), err));
         GGML_LOG_CONT(".");
     }
 
@@ -9308,8 +9272,6 @@ static bool ggml_opencl_supports_op(ggml_backend_dev_t dev, const struct ggml_te
                 case GGML_UNARY_OP_RELU:
                 case GGML_UNARY_OP_GELU_ERF:
                 case GGML_UNARY_OP_GELU_QUICK:
-                case GGML_UNARY_OP_HARDSIGMOID:
-                case GGML_UNARY_OP_HARDSWISH:
                     return ggml_is_contiguous(op->src[0]) && op->src[0]->type == GGML_TYPE_F32;
                 case GGML_UNARY_OP_SIGMOID:
                     return ggml_is_contiguous(op->src[0]);
@@ -15118,78 +15080,6 @@ static void ggml_cl_relu(ggml_backend_t backend, const ggml_tensor * src0, const
     cl_ulong offsetd = extrad->offset + dst->view_offs;
 
     cl_kernel kernel = backend_ctx->kernel_relu;
-
-    CL_CHECK(clSetKernelArg(kernel, 0, sizeof(cl_mem),   &extra0->data_device));
-    CL_CHECK(clSetKernelArg(kernel, 1, sizeof(cl_ulong), &offset0));
-    CL_CHECK(clSetKernelArg(kernel, 2, sizeof(cl_mem),   &extrad->data_device));
-    CL_CHECK(clSetKernelArg(kernel, 3, sizeof(cl_ulong), &offsetd));
-
-    const int64_t n = ggml_nelements(dst);
-
-    size_t global_work_size[] = {(size_t)n, 1, 1};
-    size_t local_work_size[] = {64, 1, 1};
-
-    size_t * local_work_size_ptr = local_work_size;
-    if (n % 64 != 0 && !backend_ctx->non_uniform_workgroups) {
-        local_work_size_ptr = nullptr;  // Let driver choose the work-group sizes.
-    }
-
-    backend_ctx->enqueue_ndrange_kernel(kernel, 3, global_work_size, local_work_size_ptr, dst);
-}
-
-static void ggml_cl_hardsigmoid(ggml_backend_t backend, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
-    GGML_ASSERT(src0);
-    GGML_ASSERT(src0->extra);
-    GGML_ASSERT(dst);
-    GGML_ASSERT(dst->extra);
-
-    UNUSED(src1);
-
-    ggml_backend_opencl_context *backend_ctx = (ggml_backend_opencl_context *)backend->context;
-
-    ggml_tensor_extra_cl * extra0 = (ggml_tensor_extra_cl *)src0->extra;
-    ggml_tensor_extra_cl * extrad = (ggml_tensor_extra_cl *)dst->extra;
-
-    cl_ulong offset0 = extra0->offset + src0->view_offs;
-    cl_ulong offsetd = extrad->offset + dst->view_offs;
-
-    cl_kernel kernel = backend_ctx->kernel_hardsigmoid_f32;
-
-    CL_CHECK(clSetKernelArg(kernel, 0, sizeof(cl_mem),   &extra0->data_device));
-    CL_CHECK(clSetKernelArg(kernel, 1, sizeof(cl_ulong), &offset0));
-    CL_CHECK(clSetKernelArg(kernel, 2, sizeof(cl_mem),   &extrad->data_device));
-    CL_CHECK(clSetKernelArg(kernel, 3, sizeof(cl_ulong), &offsetd));
-
-    const int64_t n = ggml_nelements(dst);
-
-    size_t global_work_size[] = {(size_t)n, 1, 1};
-    size_t local_work_size[] = {64, 1, 1};
-
-    size_t * local_work_size_ptr = local_work_size;
-    if (n % 64 != 0 && !backend_ctx->non_uniform_workgroups) {
-        local_work_size_ptr = nullptr;  // Let driver choose the work-group sizes.
-    }
-
-    backend_ctx->enqueue_ndrange_kernel(kernel, 3, global_work_size, local_work_size_ptr, dst);
-}
-
-static void ggml_cl_hardswish(ggml_backend_t backend, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
-    GGML_ASSERT(src0);
-    GGML_ASSERT(src0->extra);
-    GGML_ASSERT(dst);
-    GGML_ASSERT(dst->extra);
-
-    UNUSED(src1);
-
-    ggml_backend_opencl_context *backend_ctx = (ggml_backend_opencl_context *)backend->context;
-
-    ggml_tensor_extra_cl * extra0 = (ggml_tensor_extra_cl *)src0->extra;
-    ggml_tensor_extra_cl * extrad = (ggml_tensor_extra_cl *)dst->extra;
-
-    cl_ulong offset0 = extra0->offset + src0->view_offs;
-    cl_ulong offsetd = extrad->offset + dst->view_offs;
-
-    cl_kernel kernel = backend_ctx->kernel_hardswish_f32;
 
     CL_CHECK(clSetKernelArg(kernel, 0, sizeof(cl_mem),   &extra0->data_device));
     CL_CHECK(clSetKernelArg(kernel, 1, sizeof(cl_ulong), &offset0));
@@ -29304,18 +29194,6 @@ bool ggml_cl_compute_forward(ggml_backend_t backend, struct ggml_tensor * tensor
                         return false;
                     }
                     func = ggml_cl_sigmoid;
-                    break;
-                case GGML_UNARY_OP_HARDSIGMOID:
-                    if (!any_on_device) {
-                        return false;
-                    }
-                    func = ggml_cl_hardsigmoid;
-                    break;
-                case GGML_UNARY_OP_HARDSWISH:
-                    if (!any_on_device) {
-                        return false;
-                    }
-                    func = ggml_cl_hardswish;
                     break;
                 case GGML_UNARY_OP_TANH:
                     if (!any_on_device) {

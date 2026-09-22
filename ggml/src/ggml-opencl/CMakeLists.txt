@@ -206,8 +206,6 @@ set(GGML_OPENCL_KERNELS
     mul
     neg
     norm
-    hardsigmoid
-    hardswish
     pool_2d
     relu
     l2_norm
