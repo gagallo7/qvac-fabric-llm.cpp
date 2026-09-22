@@ -9662,7 +9662,7 @@ static void ggml_vk_dispatch_rows_chunked(ggml_backend_vk_context* ctx,
                                           T &push_constants,
                                           std::initializer_list<vk::DescriptorBufferInfo> const& descriptor_buffer_infos,
                                           SetPcRowOffsetFun&& set_row_offset) {
-    
+
     std::lock_guard<std::recursive_mutex> guard(ctx->device->mutex);
 
     const auto wait_for_submission = [&]() {
@@ -9670,7 +9670,7 @@ static void ggml_vk_dispatch_rows_chunked(ggml_backend_vk_context* ctx,
                     "dispatch_rows_chunked waitForFences", ctx->device);
         ctx->device->device.resetFences({ ctx->device->fence });
     };
-    
+
     if (!subctx->in_memcpys.empty() || !subctx->memsets.empty()) {
         if (ctx->device->async_use_transfer_queue) {
             ctx->device->transfer_queue->handle->submit({}, ctx->device->fence);
