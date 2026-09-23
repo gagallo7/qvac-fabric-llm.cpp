@@ -131,9 +131,12 @@ jobs:
           # runs, so an object built on an AVX-512 runner gets reused on a runner
           # without it and test-backend-ops dies with SIGILL (exit 132) before
           # printing a single test. Every other x64 job here already sets OFF.
+          # Adreno kernels default on and reject the Intel CPU ICD, so
+          # test-backend-ops passes without running anything.
           cmake -B build \
             -DGGML_NATIVE=OFF \
             -DGGML_OPENCL=ON \
+            -DGGML_OPENCL_USE_ADRENO_KERNELS=OFF \
             -DLLAMA_BUILD_TOOLS=OFF \
             -DLLAMA_BUILD_EXAMPLES=OFF \
             -DLLAMA_BUILD_SERVER=OFF
