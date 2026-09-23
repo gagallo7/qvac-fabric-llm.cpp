@@ -168,7 +168,7 @@ static void test_compact_override_rollback() {
             std::vector<size_t> margins(llama_max_devices(), 0);
             const auto status = common_fit_params(
                 "/nonexistent-fit-test/model.gguf", &mparams, &cparams,
-                split.data(), overrides.data(), margins.data(), 0, false, GGML_LOG_LEVEL_ERROR);
+                split.data(), overrides.data(), margins.data(), 0, nullptr, false, GGML_LOG_LEVEL_ERROR);
             expect_i64("fit returns expected failure status", status,
                 fail ? COMMON_PARAMS_FIT_STATUS_FAILURE : COMMON_PARAMS_FIT_STATUS_ERROR);
             expect_i64("rollback preserves override pointer", mparams.tensor_buft_overrides == overrides.data(), true);
