@@ -100,11 +100,6 @@ enum rpc_cmd {
 
 static_assert(RPC_CMD_HELLO == 14, "RPC_CMD_HELLO must be always 14");
 
-// Protocol minor that introduced RPC_CMD_SET_TENSOR_2D_HASH. The client must not
-// send it to a server that announced an older minor at HELLO: such a server
-// answers "Unknown command" and closes the connection.
-static constexpr uint8_t RPC_PROTO_MINOR_SET_TENSOR_2D_HASH = 1;
-
 // Try a hash lookup first when data size is larger than this threshold
 const size_t HASH_THRESHOLD = 10 * 1024 * 1024;
 
