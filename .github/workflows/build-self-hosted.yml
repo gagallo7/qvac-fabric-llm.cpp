@@ -63,7 +63,13 @@ env:
   LLAMA_ARG_LOG_TIMESTAMPS: 1
 
 jobs:
+  authorize:
+    permissions: {}
+    uses: ./.github/workflows/reusable-authorize-self-hosted.yml
+
   gpu-cuda:
+    needs: authorize
+    if: needs.authorize.outputs.allowed == 'true'
     # runs-on: "hf-jobs-t4-small:cuda13"
     runs-on: qvac-ubuntu2204-x64-gpu
 
@@ -129,6 +135,8 @@ jobs:
           GG_BUILD_ROCM=1 GG_BUILD_AMDGPU_TARGETS=gfx1151 bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
   gpu-vulkan-nvidia-cm:
+    needs: authorize
+    if: needs.authorize.outputs.allowed == 'true'
     # runs-on: "hf-jobs-t4-small:ubuntu26_04"
     runs-on: qvac-ubuntu2204-x64-gpu
 
@@ -175,6 +183,8 @@ jobs:
       #     save: true
 
   gpu-vulkan-nvidia-cm2:
+    needs: authorize
+    if: needs.authorize.outputs.allowed == 'true'
     # runs-on: "hf-jobs-t4-small:ubuntu26_04"
     runs-on: qvac-ubuntu2204-x64-gpu
 
@@ -221,6 +231,8 @@ jobs:
       #     save: true
 
   gpu-webgpu-nvidia:
+    needs: authorize
+    if: needs.authorize.outputs.allowed == 'true'
     # runs-on: "hf-jobs-t4-small:ubuntu26_04"
     runs-on: qvac-ubuntu2404-x64-gpu
 
@@ -323,6 +335,8 @@ jobs:
   #         GG_BUILD_ROCM=1 GG_BUILD_AMDGPU_TARGETS="gfx1101" bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
   gpu-metal:
+    needs: authorize
+    if: needs.authorize.outputs.allowed == 'true'
     runs-on: qvac-macos26-arm64-gpu
 
     steps:
@@ -337,6 +351,8 @@ jobs:
           GG_BUILD_METAL=1 bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
   gpu-webgpu-apple:
+    needs: authorize
+    if: needs.authorize.outputs.allowed == 'true'
     runs-on: qvac-macos26-arm64-gpu
 
     steps:
@@ -365,6 +381,8 @@ jobs:
             bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
   gpu-vulkan-apple:
+    needs: authorize
+    if: needs.authorize.outputs.allowed == 'true'
     runs-on: qvac-macos26-arm64-gpu
 
     steps:
@@ -455,6 +473,8 @@ jobs:
           GG_BUILD_OPENVINO=1 GGML_OPENVINO_DEVICE=GPU GG_BUILD_LOW_PERF=1 bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
   cpu-x64-high-perf:
+    needs: authorize
+    if: needs.authorize.outputs.allowed == 'true'
     runs-on: qvac-ubuntu2204-x64
 
     steps:
