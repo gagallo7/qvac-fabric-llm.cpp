@@ -1299,8 +1299,7 @@ static void ggml_backend_rpc_buffer_set_tensor_2d(ggml_backend_buffer_t buffer, 
     for (size_t i = 0; i < n_copies; i++) {
         memcpy(dest + i*size, (const char *)data + i*stride_data, size);
     }
-    // a 108.0 server does not know RPC_CMD_SET_TENSOR_2D_HASH; send it the plain transfer
-    if (data_size > HASH_THRESHOLD && ctx->cmd_queue->server_minor() >= RPC_PROTO_MINOR_SET_TENSOR_2D_HASH) {
+    if (rpc_use_hash_cache(tensor, data_size)) {
         rpc_msg_set_tensor_2d_hash_req request;
         request.tensor   = rpc_tensor;
         request.offset   = offset;
