@@ -1622,6 +1622,7 @@ static bool ggml_metal_supports_mul_mat_op(
         bool src0_f16_has_mv,
         bool mm_path) {
     if (!has_simdgroup_reduction ||
+        ggml_is_tbq_or_pq(op->src[0]->type) ||
         op->src[0]->type == GGML_TYPE_NVFP4 ||
         op->src[0]->type == GGML_TYPE_TQ1_0) {
         return false;
@@ -2083,22 +2084,33 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
         case GGML_OP_SOLVE_TRI:
             return has_simdgroup_reduction && op->src[0]->type == GGML_TYPE_F32;
         case GGML_OP_MUL_MAT:
-            if (op->src[0]->type == GGML_TYPE_PQ2_0 || op->src[0]->type == GGML_TYPE_PTQ1_0) {
-                return false;
+            if (ggml_metal_op_mul_mat_use_fwht(op)) {
+                if (!has_simdgroup_reduction) {
+                    return false;
+                }
+
+                const int64_t n = op->src[1]->ne[0];
+                int nth = n >= GGML_METAL_FWHT_TG_MIN_N ? GGML_METAL_FWHT_TG_NT : 0;
+                if (nth != 0 && dev->props.max_theadgroup_memory_size < (size_t) n * sizeof(float)) {
+                    return false;
+                }
+
+                struct ggml_metal_pipeline_with_params pipeline =
+                    ggml_metal_library_get_pipeline_fwht(dev->library, n, op->src[1]->type, nth);
+                if (nth != 0 && (!pipeline.pipeline || ggml_metal_pipeline_max_theads_per_threadgroup(pipeline) < nth)) {
+                    nth = GGML_METAL_FWHT_TG_NT_FALLBACK;
+                    pipeline = ggml_metal_library_get_pipeline_fwht(dev->library, n, op->src[1]->type, nth);
+                }
+
+                return pipeline.pipeline && (nth == 0 || ggml_metal_pipeline_max_theads_per_threadgroup(pipeline) >= nth);
             }
-            if (ggml_get_op_params_i32(op, 1) == GGML_HINT_SRC0_IS_HADAMARD &&
-                op->src[1]->type == GGML_TYPE_F16) {
-                return false;
-            }
-            return op->src[0]->type != GGML_TYPE_TQ1_0 && !ggml_is_tbq_or_pq(op->src[0]->type) &&
-                ggml_metal_supports_mul_mat_op(
+            return ggml_metal_supports_mul_mat_op(
                     has_simdgroup_reduction, op, true,
                     ggml_metal_op_mul_mat_use_mm(op, has_simdgroup_mm));
         case GGML_OP_MUL_MAT_ID:
-            if (op->src[0]->type == GGML_TYPE_PQ2_0 || op->src[0]->type == GGML_TYPE_PTQ1_0) {
-                return false;
-            }
-            return op->src[0]->type != GGML_TYPE_TQ1_0 && has_simdgroup_reduction && op->src[0]->type != GGML_TYPE_NVFP4 && !ggml_is_tbq_or_pq(op->src[0]->type);
+            return ggml_metal_supports_mul_mat_op(
+                    has_simdgroup_reduction, op, false,
+                    ggml_metal_op_mul_mat_id_use_mm(op, has_simdgroup_mm));
         case GGML_OP_SET:
         case GGML_OP_CPY:
         case GGML_OP_DUP:
@@ -2113,6 +2125,8 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
                            case GGML_TYPE_Q8_0:
                            case GGML_TYPE_Q1_0:
                            case GGML_TYPE_Q2_0:
+                           case GGML_TYPE_PQ2_0:
+                           case GGML_TYPE_PTQ1_0:
                            case GGML_TYPE_Q4_0:
                            case GGML_TYPE_Q4_1:
                            case GGML_TYPE_Q5_0:
@@ -2128,6 +2142,7 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
                         switch (op->type) {
                             case GGML_TYPE_F32:
                             case GGML_TYPE_F16:
+                            case GGML_TYPE_PTQ1_0:
                                 return true;
                             default:
                                 return false;
@@ -2142,6 +2157,8 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
                         }
                     case GGML_TYPE_Q1_0:
                     case GGML_TYPE_Q2_0:
+                    case GGML_TYPE_PQ2_0:
+                    case GGML_TYPE_PTQ1_0:
                     case GGML_TYPE_Q4_0:
                     case GGML_TYPE_Q4_1:
                     case GGML_TYPE_Q5_0:
@@ -2162,10 +2179,7 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
                 };
             }
         case GGML_OP_GET_ROWS:
-            return op->src[0]->type != GGML_TYPE_NVFP4 &&
-                   op->src[0]->type != GGML_TYPE_TQ1_0 &&
-                   op->src[0]->type != GGML_TYPE_PQ2_0 &&
-                   op->src[0]->type != GGML_TYPE_PTQ1_0;
+            return op->src[0]->type != GGML_TYPE_NVFP4 && op->src[0]->type != GGML_TYPE_TQ1_0;
         case GGML_OP_SET_ROWS:
             {
                 if (op->src[0]->type == GGML_TYPE_F16) {

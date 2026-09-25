@@ -7,6 +7,23 @@
 
 #include <vector>
 
+// must stay in sync with the kernel_fwht_<type>_<N> templates in kernels/misc.metal
+static bool ggml_metal_fwht_supported_size(int64_t n) {
+    return n == 64 || n == 128 || n == 256 || n == 512 || n == 1024 ||
+           n == 2048 || n == 4096 || n == 8192;
+}
+
+// supports_op and dispatch must use the same FWHT conditions.
+bool ggml_metal_op_mul_mat_use_fwht(const struct ggml_tensor * op) {
+    return ggml_get_op_params_i32(op, 1) == GGML_HINT_SRC0_IS_HADAMARD &&
+           op->type == GGML_TYPE_F32 &&
+           (op->src[1]->type == GGML_TYPE_F32 || op->src[1]->type == GGML_TYPE_F16) &&
+           ggml_is_contiguous(op->src[1]) &&
+           ggml_is_contiguous(op) &&
+           ggml_are_same_shape(op->src[1], op) &&
+           ggml_metal_fwht_supported_size(op->src[1]->ne[0]);
+}
+
 bool ggml_metal_op_mul_mat_use_mm(const struct ggml_tensor * op, bool has_simdgroup_mm) {
     const int64_t ne00 = op->src[0]->ne[0];
     const int64_t ne11 = op->src[1]->ne[1];
