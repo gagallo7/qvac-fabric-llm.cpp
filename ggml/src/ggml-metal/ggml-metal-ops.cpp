@@ -3229,37 +3229,45 @@ int ggml_metal_op_pool_1d(ggml_metal_op_t ctx, int idx) {
     return 1;
 }
 
-// supported FWHT sizes, must stay in sync with the
-// kernel_fwht_f32_<N> templates in ggml-metal.metal
-static bool ggml_metal_fwht_supported_size(int64_t n) {
-    return n == 64 || n == 128 || n == 256 || n == 512;
-}
-
-int ggml_metal_op_fwht(ggml_metal_op_t ctx, int idx) {
-    ggml_tensor * op = ctx->node(idx);
-
+static int ggml_metal_op_fwht_impl(ggml_metal_op_t ctx, ggml_tensor * op, ggml_tensor * src, ggml_tensor * signs) {
     ggml_metal_library_t lib = ctx->lib;
     ggml_metal_encoder_t enc = ctx->enc;
 
-    ggml_tensor * src1 = op->src[1];
-
-    const int64_t n = src1->ne[0];
-    const int64_t nrows = ggml_nrows(src1);
+    const int64_t n = op->src[0]->ne[0];
+    const int64_t nrows = ggml_nelements(src) / n;
 
     ggml_metal_kargs_fwht args = {
         /*.nrows = */ (int32_t) nrows,
+        /*.n_blk  = */ signs ? (int32_t) (signs->ne[0] / n) : 0,
     };
 
-    auto pipeline = ggml_metal_library_get_pipeline_fwht(lib, n);
+    GGML_ASSERT(src->type == GGML_TYPE_F32 || src->type == GGML_TYPE_F16);
+    GGML_ASSERT(op->type == GGML_TYPE_F32);
+
+    int nth = n >= GGML_METAL_FWHT_TG_MIN_N ? GGML_METAL_FWHT_TG_NT : 0;
+    auto pipeline = ggml_metal_library_get_pipeline_fwht(lib, n, src->type, nth);
+    if (nth != 0 && (!pipeline.pipeline || ggml_metal_pipeline_max_theads_per_threadgroup(pipeline) < nth)) {
+        nth = GGML_METAL_FWHT_TG_NT_FALLBACK;
+        pipeline = ggml_metal_library_get_pipeline_fwht(lib, n, src->type, nth);
+    }
+    if (!pipeline.pipeline || (nth != 0 && ggml_metal_pipeline_max_theads_per_threadgroup(pipeline) < nth)) {
+        GGML_ABORT("FWHT pipeline unavailable: n=%lld, type=%s, nth=%d", (long long) n, ggml_type_name(src->type), nth);
+    }
+
+    const int th_max = ggml_metal_pipeline_max_theads_per_threadgroup(pipeline);
 
     ggml_metal_encoder_set_pipeline(enc, pipeline);
     ggml_metal_encoder_set_bytes(enc, &args, sizeof(args), 0);
-    ggml_metal_encoder_set_buffer(enc, ggml_metal_get_buffer_id(src1), 1);
+    ggml_metal_encoder_set_buffer(enc, ggml_metal_get_buffer_id(src), 1);
     ggml_metal_encoder_set_buffer(enc, ggml_metal_get_buffer_id(op), 2);
+    ggml_metal_encoder_set_buffer(enc, ggml_metal_get_buffer_id(signs ? signs : src), 3);
 
-    const int th_max = ggml_metal_pipeline_max_theads_per_threadgroup(pipeline);
+    if (nth != 0) {
+        ggml_metal_encoder_dispatch_threadgroups(enc, nrows, 1, 1, nth, 1, 1);
+        return 1;
+    }
+
     const int simd_size = 32;
-
     int sg_per_tg = 2;
     sg_per_tg = std::min(sg_per_tg, th_max/simd_size);
     sg_per_tg = std::max(sg_per_tg, 1);
@@ -3268,6 +3276,56 @@ int ggml_metal_op_fwht(ggml_metal_op_t ctx, int idx) {
     ggml_metal_encoder_dispatch_threadgroups(enc, n_tg, 1, 1, 32*sg_per_tg, 1, 1);
 
     return 1;
+}
+
+int ggml_metal_op_fwht(ggml_metal_op_t ctx, int idx) {
+    ggml_tensor * op = ctx->node(idx);
+    return ggml_metal_op_fwht_impl(ctx, op, op->src[1], nullptr);
+}
+
+// the fusion table matched MUL + MUL_MAT structurally; the MUL result also reaches the MUL_MAT
+// through a RESHAPE node, so check that neither the MUL nor the RESHAPE has another consumer
+static bool ggml_metal_op_fwht_signed_elidable(ggml_metal_op_t ctx, int idx) {
+    static constexpr ggml_op ops[3] = { GGML_OP_MUL, GGML_OP_RESHAPE, GGML_OP_MUL_MAT };
+
+    const ggml_tensor * mm = ctx->node(idx + 1);
+
+    const int gi_mul = ctx->graph_idx(idx);
+    const int gi_mm  = ctx->graph_idx(idx + 1);
+
+    int gi_rs = -1;
+    for (int k = gi_mul + 1; k < gi_mm; ++k) {
+        if (ctx->graph()->nodes[k] == mm->src[1]) {
+            gi_rs = k;
+            break;
+        }
+    }
+    if (gi_rs < 0) {
+        return false;
+    }
+
+    const int tri[3] = { gi_mul, gi_rs, gi_mm };
+
+    return ggml_can_fuse_subgraph_ext(ctx->graph(), tri, 3, ops, &gi_mm, 1);
+}
+
+static int ggml_metal_op_fwht_signed(ggml_metal_op_t ctx, int idx) {
+    ggml_tensor * mul = ctx->node(idx);
+    ggml_tensor * mm  = ctx->node(idx + 1);
+
+    ggml_tensor * x     = ggml_are_same_shape(mul, mul->src[0]) ? mul->src[0] : mul->src[1];
+    ggml_tensor * signs = x == mul->src[0] ? mul->src[1] : mul->src[0];
+
+    // the encode loop pre-checked the mul only
+    ggml_metal_op_fusion_concurrency(ctx, idx, 2);
+
+    ggml_metal_op_fwht_impl(ctx, mm, x, signs);
+
+    if (ggml_metal_fusion_info_debug(ctx->finfo) > 1) {
+        GGML_LOG_DEBUG("%s: fuse: MUL + MUL_MAT (signed FWHT)\n", __func__);
+    }
+
+    return 2;
 }
 
 int ggml_metal_op_pool_2d(ggml_metal_op_t ctx, int idx) {
@@ -3343,17 +3401,8 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
     ggml_metal_library_t lib = ctx->lib;
     ggml_metal_encoder_t enc = ctx->enc;
 
-    const int32_t hint = ggml_get_op_params_i32(op, 1);
-
-    if (hint == GGML_HINT_SRC0_IS_HADAMARD) {
-        if (op->src[1]->type == GGML_TYPE_F32 &&
-            op->type == GGML_TYPE_F32 &&
-            ggml_is_contiguous(op->src[1]) &&
-            ggml_is_contiguous(op) &&
-            ggml_are_same_shape(op->src[1], op) &&
-            ggml_metal_fwht_supported_size(op->src[1]->ne[0])) {
-            return ggml_metal_op_fwht(ctx, idx);
-        }
+    if (ggml_metal_op_mul_mat_use_fwht(op)) {
+        return ggml_metal_op_fwht(ctx, idx);
     }
     const ggml_metal_device_props * props_dev = ggml_metal_device_get_props(ctx->dev);
 
@@ -3383,6 +3432,8 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
            op->src[0]->type == GGML_TYPE_BF16 ||
            op->src[0]->type == GGML_TYPE_Q1_0 ||
            op->src[0]->type == GGML_TYPE_Q2_0 ||
+           op->src[0]->type == GGML_TYPE_PQ2_0 ||
+           op->src[0]->type == GGML_TYPE_PTQ1_0 ||
            op->src[0]->type == GGML_TYPE_Q4_0 ||
            op->src[0]->type == GGML_TYPE_Q4_1 ||
            op->src[0]->type == GGML_TYPE_Q5_0 ||
@@ -4796,6 +4847,17 @@ int ggml_metal_op_bin(ggml_metal_op_t ctx, int idx) {
         if (fusion && fusion->id == GGML_METAL_FUSION_SNAKE) {
             ctx->count_fusions(fusion);
             return ggml_metal_op_snake_fused(ctx, idx);
+        }
+
+        // sign vector + hadamard mul_mat: mul -> reshape -> mul_mat
+        if (fusion && fusion->id == GGML_METAL_FUSION_FWHT_SIGNED) {
+            if (ggml_metal_op_fwht_signed_elidable(ctx, idx)) {
+                ctx->count_fusions(fusion);
+                return ggml_metal_op_fwht_signed(ctx, idx);
+            }
+
+            fusion = nullptr;
+            n_fuse = 1;
         }
     }
 
