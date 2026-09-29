@@ -2082,6 +2082,24 @@ static int ggml_metal_op_mul_mv_glu_dispatch(
     const ggml_tensor * src1 = up->src[1];
     const ggml_tensor * ids  = up->src[2];
 
+    // Allocator reuse can place the GLU output in a dead matmul input. Fusion
+    // extends that input's lifetime, so writing the output could corrupt weights,
+    // activations, or expert IDs that other threadgroups are still reading.
+    // Check the full weight buffer for both split and stacked gate/up layouts.
+    const ggml_metal_buffer_id dst = ggml_metal_get_buffer_id(glu);
+    for (const ggml_tensor * input : { src0, gate_w, src1, ids }) {
+        if (!input) {
+            continue;
+        }
+        const ggml_metal_buffer_id src = ggml_metal_get_buffer_id(input);
+        if (dst.metal != nullptr && dst.metal == src.metal &&
+                (dst.offs <= src.offs
+                    ? src.offs - dst.offs < ggml_nbytes(glu)
+                    : dst.offs - src.offs < ggml_nbytes(input))) {
+            return 0;
+        }
+    }
+
     ggml_metal_op_fusion_concurrency(ctx, idx, n_fuse);
 
     ggml_metal_buffer_id bid_up   = ggml_metal_get_buffer_id(src0);
