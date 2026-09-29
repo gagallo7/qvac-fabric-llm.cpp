@@ -661,8 +661,13 @@ llama_memory_hybrid_idx_context::llama_memory_hybrid_idx_context(llama_memory_hy
     ctx_idx(mem->get_mem_idx() == nullptr ? nullptr :
         new llama_kv_cache_context(mem->get_mem_idx())) {
     if (kpool_track()) {
+        // Keep the layout's own cache_safe. The two pool paths differ in node count, so a
+        // reserve on the other one never covers a decode: ggml-alloc then sizes the scheduler
+        // from the first decode and a later larger batch reallocates (GGML_SCHED_DEBUG_REALLOC).
         kpool_st = std::make_unique<kpool_state>(kpool_build_layout());
         i_kpool  = 0;
+        kpool_reserve = true;
+        mem_idx_stale_batch = mem->mem_idx_is_stale();
     }
 }
 
@@ -951,12 +956,31 @@ const llama_memory_hybrid_idx_context::kpool_state & llama_memory_hybrid_idx_con
     return *kpool_st;
 }
 
-uint32_t llama_memory_hybrid_idx_context::get_n_kpool() const {
-    return kpool_pad(kpool_cur().n_pool_real);
+uint32_t llama_memory_hybrid_idx_context::get_n_kpool(const llama_ubatch & ubatch) const {
+    uint64_t n_pool = kpool_cur().n_pool_real;
+    if (kpool_reserve) {
+        // The full context is built before the batch has cache slots. Reserve the
+        // pools that the synthetic worst-case batch will complete.
+        const uint32_t kpool = mem->get_kpool();
+        n_pool += (uint64_t) ubatch.n_seqs*((ubatch.n_seq_tokens + kpool - 1)/kpool);
+    }
+    GGML_ASSERT(n_pool <= UINT32_MAX);
+    return kpool_pad((uint32_t) n_pool);
 }
 
-uint32_t llama_memory_hybrid_idx_context::get_n_kpool_new() const {
-    return std::max(1u, kpool_cur().n_new);
+uint32_t llama_memory_hybrid_idx_context::get_n_kpool_new(const llama_ubatch & ubatch) const {
+    const auto & st = kpool_cur();
+    uint64_t n_new = st.n_new;
+    if (kpool_reserve) {
+        // A sequence may start one token short of completing a pool.
+        const uint32_t kpool = mem->get_kpool();
+        n_new = (uint64_t) ubatch.n_seqs*((ubatch.n_seq_tokens + kpool - 1)/kpool);
+        if (mem_idx_stale_batch) {
+            n_new += st.n_pool_real;
+        }
+    }
+    GGML_ASSERT(n_new <= UINT32_MAX);
+    return std::max(1u, (uint32_t) n_new);
 }
 
 bool llama_memory_hybrid_idx_context::get_kpool_cache_safe() const {
