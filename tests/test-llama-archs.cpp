@@ -121,6 +121,11 @@ static gguf_context_ptr get_gguf_ctx(const llm_arch arch, const bool moe) {
         n_embd = 160; // exercise per-head tensor split granularity with head size 80
     } else if (arch == LLM_ARCH_QWEN3 || arch == LLM_ARCH_MUSE_GLIMMER || arch == LLM_ARCH_AFMOE) {
         n_head = 4;
+    } else if (arch == LLM_ARCH_GLM5_NEXT) {
+        // CI exercises tensor parallelism with up to four devices.
+        n_embd = 192;
+        n_head = 12;
+        n_ff   = 192;
     } else if (arch == LLM_ARCH_DEEPSEEK2
             || arch == LLM_ARCH_DEEPSEEK32
             || arch == LLM_ARCH_GLM_DSA
@@ -128,14 +133,10 @@ static gguf_context_ptr get_gguf_ctx(const llm_arch arch, const bool moe) {
             || arch == LLM_ARCH_KIMI_LINEAR
             || arch == LLM_ARCH_BAILINGMOE3
             || arch == LLM_ARCH_KIMI_K3
-            || arch == LLM_ARCH_GLM5_NEXT
             || arch == LLM_ARCH_MISTRAL4
             || arch == LLM_ARCH_HY_V4) {
         n_embd = 128;
-        // The tensor-parallel Meta fixture uses two devices. Give GLM5 one
-        // attention head per device so its head-sharded MLA tensors remain
-        // split on the same batch axis after reshape and permute.
-        n_head = arch == LLM_ARCH_GLM5_NEXT ? 2 : 1;
+        n_head = 1;
         n_ff   = 192;
     } else if (arch == LLM_ARCH_NEMOTRON_H || arch == LLM_ARCH_NEMOTRON_H_MOE) {
         n_layer = 3;
