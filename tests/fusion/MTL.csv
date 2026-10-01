@@ -48,6 +48,10 @@ glm4                ,0   ,any     ,RMS_NORM+MUL                ,      5
 glm4                ,0   ,any     ,RMS_NORM+MUL+ADD            ,      4
 glm4moe             ,1   ,any     ,ADD+ADD                     ,      1
 glm4moe             ,1   ,any     ,RMS_NORM+MUL                ,      9
+glm5-next           ,0   ,any     ,ADD+ADD+ADD                 ,      1
+glm5-next           ,0   ,any     ,GATED_DELTA_NET+CPY         ,      1
+glm5-next           ,0   ,any     ,NORM+MUL+ADD                ,      1
+glm5-next           ,0   ,any     ,RMS_NORM+MUL                ,      8
 gpt-oss             ,0   ,any     ,RMS_NORM+MUL                ,      5
 gpt2                ,0   ,any     ,NORM+MUL+ADD                ,      5
 gptneox             ,0   ,any     ,NORM+MUL+ADD                ,      5
@@ -139,7 +143,7 @@ qwen3vlmoe          ,1   ,any     ,RMS_NORM+MUL                ,      9
 qwen4exp            ,0   ,any     ,ADD+ADD+ADD                 ,      5
 qwen4exp            ,0   ,any     ,ADD+ADD+ADD+ADD+ADD+ADD+ADD ,      9
 qwen4exp            ,0   ,any     ,GATED_DELTA_NET+CPY         ,      1
-qwen4exp            ,0   ,any     ,RMS_NORM+MUL                ,      5
+qwen4exp            ,0   ,any     ,RMS_NORM+MUL                ,     13
 refact              ,0   ,any     ,RMS_NORM+MUL                ,      5
 refact              ,0   ,any     ,RMS_NORM+MUL                ,      5
 rnd1                ,0   ,any     ,RMS_NORM+MUL                ,      9
