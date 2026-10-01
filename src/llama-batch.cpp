@@ -226,6 +226,10 @@ bool llama_batch_allocr::init(
     // compute stats
     //
 
+    if (batch.embd && ubatch_embd.size() < (size_t) batch.n_tokens*n_embd) {
+        ubatch_embd.resize((size_t) batch.n_tokens*n_embd);
+    }
+
     // count the outputs in this batch
     for (int32_t i = 0; i < batch.n_tokens; ++i) {
         n_outputs += batch.logits[i] != 0;
@@ -492,7 +496,6 @@ llama_ubatch llama_batch_allocr::ubatch_reserve(uint32_t n_seq_tokens, uint32_t 
     auto udata = std::make_shared<llama_ubatch::data_t>();
 
     udata->token     .resize(n_tokens);
-    udata->embd      .clear();
     udata->pos       .resize(n_pos_all);
     udata->n_seq_id  .resize(n_tokens);
     udata->seq_id    .resize(n_tokens);
@@ -864,11 +867,16 @@ llama_ubatch llama_batch_allocr::ubatch_add(const std::vector<int32_t> & idxs, u
     const bool use_token = batch.token && !(mixed_batch && n_embd_rows == n_tokens);
     const bool use_embd  = batch.embd  && !(mixed_batch && n_embd_rows == 0);
 
-    const int64_t n_embd_all = use_embd ? (int64_t) n_tokens*n_embd : 0;
-    const int64_t n_pos_all  =              (int64_t) n_tokens*n_pos_per_embd;
+    const int64_t n_pos_all = (int64_t) n_tokens*n_pos_per_embd;
+
+    // the ubatches of one split take disjoint rows of ubatch_embd: n_used already counts the rows of this ubatch
+    float * embd = nullptr;
+    if (use_embd) {
+        GGML_ASSERT((size_t) n_used*n_embd <= ubatch_embd.size());
+        embd = ubatch_embd.data() + (size_t) (n_used - n_tokens)*n_embd;
+    }
 
     udata->token     .resize(n_tokens);
-    udata->embd      .resize(n_embd_all);
     udata->pos       .resize(n_pos_all);
     udata->n_seq_id  .resize(n_tokens);
     udata->seq_id    .resize(n_tokens);
@@ -889,7 +897,7 @@ llama_ubatch llama_batch_allocr::ubatch_add(const std::vector<int32_t> & idxs, u
         }
 
         if (use_embd) {
-            memcpy(udata->embd.data() + i*n_embd, batch.embd + (int64_t) idxs[i]*n_embd, n_embd*sizeof(float));
+            memcpy(embd + i*n_embd, batch.embd + (int64_t) idxs[i]*n_embd, n_embd*sizeof(float));
         }
 
         if (mixed) {
@@ -941,7 +949,7 @@ llama_ubatch llama_batch_allocr::ubatch_add(const std::vector<int32_t> & idxs, u
         /*.n_pos        =*/ n_pos_per_embd,
 
         /*.token        =*/ use_token ? udata->token.data() : nullptr,
-        /*.embd         =*/ use_embd  ? udata->embd.data()  : nullptr,
+        /*.embd         =*/ embd,
         /*.pos          =*/ udata->pos.data(),
         /*.n_seq_id     =*/ udata->n_seq_id.data(),
         /*.seq_id       =*/ udata->seq_id.data(),
