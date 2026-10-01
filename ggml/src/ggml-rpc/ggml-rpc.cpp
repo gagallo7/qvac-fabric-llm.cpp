@@ -1313,7 +1313,7 @@ static size_t ggml_backend_rpc_buffer_type_get_alloc_size(ggml_backend_buffer_ty
         std::string                cache_key = make_alloc_cache_key(request);
         rpc_msg_get_alloc_size_rsp response;
         if (cmd_queue->get_cached_alloc_size(cache_key, response.alloc_size)) {
-            return response.alloc_size;
+            return std::max<size_t>(response.alloc_size, min_size);
         }
         bool status =
             cmd_queue->submit_rpc_sync(RPC_CMD_GET_ALLOC_SIZE, &request, sizeof(request), &response, sizeof(response));
