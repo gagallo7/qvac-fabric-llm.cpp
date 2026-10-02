@@ -270,11 +270,13 @@ void llama_memory_hybrid_idx::state_drop(llama_seq_id seq_id) {
         return;
     }
 
-    get_mem_attn()->seq_rm(seq_id, -1, -1);
+    // state_clear() also zeroes the K/V data of the dropped cells: without flash attention the other
+    // sequences still read the data of free cells, so a half-written restore would leak NaN into their logits
+    get_mem_attn()->state_clear(seq_id);
     get_mem_recr()->seq_rm(seq_id, -1, -1);
 
     if (mem_idx) {
-        mem_idx->seq_rm(seq_id, -1, -1);
+        mem_idx->state_clear(seq_id);
     }
 }
 
