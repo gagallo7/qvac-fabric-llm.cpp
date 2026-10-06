@@ -349,8 +349,7 @@ struct laya_env {
     llama_context * ctx   = nullptr;
 
     laya_env(const std::string & path, uint32_t n_batch, enum llama_pooling_type pooling = LLAMA_POOLING_TYPE_RANK) {
-        llama_model_params mparams = llama_model_default_params();
-        mparams.n_gpu_layers = 0;
+        llama_model_params mparams = cpu_model_params();
         model = llama_model_load_from_file(path.c_str(), mparams);
         if (!model) {
             fprintf(stderr, "failed to load %s\n", path.c_str());
