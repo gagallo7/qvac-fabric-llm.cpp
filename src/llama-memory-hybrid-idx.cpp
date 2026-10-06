@@ -661,10 +661,10 @@ llama_memory_hybrid_idx_context::llama_memory_hybrid_idx_context(llama_memory_hy
     ctx_idx(mem->get_mem_idx() == nullptr ? nullptr :
         new llama_kv_cache_context(mem->get_mem_idx())) {
     if (kpool_track()) {
+        // Keep the layout's own cache_safe. The two pool paths differ in node count, so a
+        // reserve on the other one never covers a decode: ggml-alloc then sizes the scheduler
+        // from the first decode and a later larger batch reallocates (GGML_SCHED_DEBUG_REALLOC).
         kpool_st = std::make_unique<kpool_state>(kpool_build_layout());
-        // Shared sequences cannot reuse cached pools and need an extra temporary
-        // for the uncached path, so reserve that worst-case topology.
-        kpool_st->cache_safe = false;
         i_kpool  = 0;
         kpool_reserve = true;
         mem_idx_stale_batch = mem->mem_idx_is_stale();
