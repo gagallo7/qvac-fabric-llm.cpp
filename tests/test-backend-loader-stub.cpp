@@ -20,6 +20,9 @@ extern "C" __declspec(dllimport) int loader_test_dep_score(void);
 #    define STUB_SCORE loader_test_dep_score()
 #endif
 
+STUB_EXPORT ggml_backend_reg_t ggml_backend_init(void);
+STUB_EXPORT int                ggml_backend_score(void);
+
 static const char * stub_get_name(ggml_backend_reg_t) {
     return STUB_NAME;
 }
