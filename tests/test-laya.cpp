@@ -232,14 +232,25 @@ static std::vector<llama_token> sequence(llama_token qtype, int n_options, int s
     return ids;
 }
 
+// the tiny models stay on the CPU: an explicit, empty device list keeps every GPU backend out of
+// the context. n_gpu_layers = 0 alone is not enough: the weights then sit in the first device's
+// host buffer type, and a backend that accepts host buffers (OpenVINO) computes the graph anyway
+// although its decoder assumes KV-cache-backed attention and throws on the decision blocks
+static llama_model_params cpu_model_params() {
+    static ggml_backend_dev_t no_devices[] = { nullptr };
+    llama_model_params mparams = llama_model_default_params();
+    mparams.n_gpu_layers = 0;
+    mparams.devices      = no_devices;
+    return mparams;
+}
+
 struct runner {
     llama_model   * model = nullptr;
     llama_context * ctx   = nullptr;
     int n_out = 0;
 
     runner(const std::string & path, enum llama_pooling_type pooling) {
-        llama_model_params mparams = llama_model_default_params();
-        mparams.n_gpu_layers = 0;
+        llama_model_params mparams = cpu_model_params();
         model = llama_model_load_from_file(path.c_str(), mparams);
         if (!model) {
             fprintf(stderr, "failed to load %s\n", path.c_str());
@@ -714,8 +725,7 @@ int main(int argc, char ** argv) {
         const std::string path = dir + "/test-laya-invalid.gguf";
         for (size_t i = 0; i < sizeof(invalid)/sizeof(invalid[0]); ++i) {
             write_model(path, invalid[i]);
-            llama_model_params mparams = llama_model_default_params();
-            mparams.n_gpu_layers = 0;
+            llama_model_params mparams = cpu_model_params();
             llama_model * model = llama_model_load_from_file(path.c_str(), mparams);
             CHECK(model == nullptr, "invalid model %zu loaded", i);
             if (model) {
