@@ -580,9 +580,11 @@ ggml_tensor * llama_model_glm5_next::graph::build_kda_layer(
     ggml_tensor * new_state = attn_out.second;
     cb(output, "kda_scan_out", il);
 
+    // Keep the sequence axis so GDN cache fusion matches reserve and decode.
     ggml_build_forward_expand(gf,
         ggml_cpy(ctx0, new_state,
-            ggml_view_1d(ctx0, ssm_states_all, hparams.n_embd_s() * n_seqs,
+            ggml_view_2d(ctx0, ssm_states_all, hparams.n_embd_s(), n_seqs,
+                         hparams.n_embd_s() * ggml_element_size(ssm_states_all),
                          kv_head * hparams.n_embd_s() * ggml_element_size(ssm_states_all))));
 
     // output gate, then RMSNorm(o) * Sigmoid(g2)
