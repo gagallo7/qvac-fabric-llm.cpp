@@ -1125,9 +1125,8 @@ static bool ggml_metal_fusion_check_mul_mv_id_mul(
         return false;
     }
 
-    // mat-vec path only: shape half of ggml_metal_op_mul_mat_id_use_mm, so that the encoder
-    // never takes the mat-mat path for a pair the optimizer packed
-    if (mm->src[0]->ne[0] >= 64 && mm->src[2]->ne[1] >= 32) {
+    // gate mat-vec fusion as in ggml_metal_op_mul_mat_id_use_mm; ignore row counts when packing to keep pp and tg node order stable.
+    if (mode == GGML_METAL_FUSION_FULL && mm->src[0]->ne[0] >= 64 && mm->src[2]->ne[1] >= 32) {
         return false;
     }
 
