@@ -728,9 +728,9 @@ static bool ggml_metal_fusion_check_moe_reduce(
     return true;
 }
 
-// gate + up matmuls followed by SWIGLU, single-token decode only. the fused kernel computes
-// both matrix-vector products and writes silu(gate) * up, eliding the two matmul outputs.
-static bool ggml_metal_fusion_mul_mv_glu_decode_ok(const ggml_tensor * mm) {
+// gate + up + SWIGLU: fuse only single-token decode, without storing the matmul outputs.
+// ignore row counts when packing to keep pp and tg node order stable and avoid graph reallocation.
+static bool ggml_metal_fusion_mul_mv_glu_decode_ok(const ggml_tensor * mm, ggml_metal_fusion_mode mode) {
     const ggml_tensor * src0 = mm->src[0];
     const ggml_tensor * src1 = mm->src[1];
 
@@ -762,11 +762,13 @@ static bool ggml_metal_fusion_mul_mv_glu_decode_ok(const ggml_tensor * mm) {
     if (mm->op == GGML_OP_MUL_MAT && ggml_get_op_params_i32(mm, 1) == GGML_HINT_SRC0_IS_HADAMARD) {
         return false;
     }
-    if (mm->op == GGML_OP_MUL_MAT && mm->ne[1] != 1) {
-        return false;
-    }
-    if (mm->op == GGML_OP_MUL_MAT_ID && mm->ne[2] != 1) {
-        return false;
+    if (mode == GGML_METAL_FUSION_FULL) {
+        if (mm->op == GGML_OP_MUL_MAT && mm->ne[1] != 1) {
+            return false;
+        }
+        if (mm->op == GGML_OP_MUL_MAT_ID && mm->ne[2] != 1) {
+            return false;
+        }
     }
 
     return true;
@@ -813,7 +815,7 @@ static bool ggml_metal_fusion_check_mul_mv_glu(
         return false;
     }
 
-    if (!ggml_metal_fusion_mul_mv_glu_decode_ok(up) || !ggml_metal_fusion_mul_mv_glu_decode_ok(gate)) {
+    if (!ggml_metal_fusion_mul_mv_glu_decode_ok(up, mode) || !ggml_metal_fusion_mul_mv_glu_decode_ok(gate, mode)) {
         return false;
     }
 
@@ -872,7 +874,7 @@ static bool ggml_metal_fusion_check_mul_mv_glu_stacked(
         return false;
     }
 
-    if (!ggml_metal_fusion_mul_mv_glu_decode_ok(gate_up)) {
+    if (!ggml_metal_fusion_mul_mv_glu_decode_ok(gate_up, mode)) {
         return false;
     }
 
