@@ -4033,6 +4033,10 @@ void llama_context::opt_cleanup() {
         original_n_ctx_train = 0;
     }
 
+    // opt_init may have switched to the KV-bypass training graph, inference reads the KV cache again
+    cparams.training   = false;
+    sched_need_reserve = true;
+
     ggml_backend_sched_reset(sched.get());
 
     // when the scheduler is reset, we cannot reuse old graphs, so we reset the previous graph results
