@@ -646,7 +646,11 @@ void ggml_vk_buffer_copy(vk_buffer& dst, size_t dst_offset, vk_buffer& src, size
 void ggml_vk_buffer_memset_async(vk_context& ctx, vk_buffer& dst, size_t offset, uint32_t c, size_t size) {
     VK_LOG_DEBUG("ggml_vk_buffer_memset_async(" << offset << ", " << c << ", " << size << ")");
 
-    if (dst->memory_property_flags & vk::MemoryPropertyFlagBits::eHostVisible) {
+    // Host memsets run at submit time, before earlier GPU work in the batch.
+    // Only UMA may take this path, as upstream does. On ReBAR, an earlier
+    // node that aliases the range would overwrite the memset.
+    if (dst->memory_property_flags & vk::MemoryPropertyFlagBits::eHostVisible &&
+        dst->device->uma) {
         deferred_memset((uint8_t*)dst->info.pMappedData + offset, c, size, &ctx->memsets);
         return;
     }
@@ -658,7 +662,8 @@ void ggml_vk_buffer_memset_async(vk_context& ctx, vk_buffer& dst, size_t offset,
 void ggml_vk_buffer_memset(vk_buffer& dst, size_t offset, uint32_t c, size_t size) {
     VK_LOG_DEBUG("ggml_vk_buffer_memset(" << offset << ", " << c << ", " << size << ")");
 
-    if (dst->memory_property_flags & vk::MemoryPropertyFlagBits::eHostVisible) {
+    if (dst->memory_property_flags & vk::MemoryPropertyFlagBits::eHostVisible &&
+        dst->device->uma) {
         memset((uint8_t*)dst->info.pMappedData + offset, c, size);
         return;
     }
