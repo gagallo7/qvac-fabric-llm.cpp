@@ -285,6 +285,14 @@ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
     # CTest default and the ctest --timeout values passed by the workflow jobs.
     set_tests_properties(test-save-load-state PROPERTIES FIXTURES_REQUIRED generate-models TIMEOUT 3600)
 
+    llama_build(test-fit-measured.cpp)
+    llama_test(
+        test-fit-measured
+        LABEL main
+        ARGS "${MODEL_DIR}/llama-dense.gguf"
+    )
+    set_tests_properties(test-fit-measured PROPERTIES FIXTURES_REQUIRED generate-models)
+
     llama_build(test-fusion.cpp)
 
     llama_build_and_test(test-kv-cells.cpp)
