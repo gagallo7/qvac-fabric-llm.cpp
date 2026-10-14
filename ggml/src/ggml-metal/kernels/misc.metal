@@ -935,3 +935,36 @@ kernel void kernel_dsv4_hc_post_f32(
         *(device float *) (dst + i0*args.nb_d0 + idst*args.nb_d1 + it*args.nb_d2) = result[idst];
     }
 }
+
+
+kernel void kernel_scale_residual_f32(
+    constant   ggml_metal_kargs_scale_residual & args,
+    device  const float * x,
+    device  const float * bias,
+    device  const float * gamma,
+    device  const float * residual,
+    device        float * y,
+    uint3 tgpig[[threadgroup_position_in_grid]],
+    uint3 tpitg[[thread_position_in_threadgroup]],
+    uint3   ntg[[threads_per_threadgroup]]) {
+
+    const int c = (int) tgpig.x;
+    const int batch = (int) tgpig.y;
+    if (c >= args.C || batch >= args.B) return;
+
+    const int L = args.L;
+    const int sxt = args.sxt, sxc = args.sxc;
+    const int syt = args.syt, syc = args.syc;
+    const int srt = args.srt, src = args.src;
+    const float bv = bias[c];
+    const float gv = gamma[c];
+    const size_t batch_offset = (size_t) batch * L * args.C;
+
+    device const float * x_c = x        + batch_offset + (size_t) c * sxc;
+    device const float * r_c = residual + batch_offset + (size_t) c * src;
+    device       float * y_c = y        + batch_offset + (size_t) c * syc;
+
+    for (int t = (int) tpitg.x; t < L; t += (int) ntg.x) {
+        y_c[(size_t) t * syt] = r_c[(size_t) t * srt] + (x_c[(size_t) t * sxt] + bv) * gv;
+    }
+}
