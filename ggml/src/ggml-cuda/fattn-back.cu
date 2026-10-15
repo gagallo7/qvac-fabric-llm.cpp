@@ -66,13 +66,19 @@ static __device__ __forceinline__ int64_t fab_o_row(
 
 template <typename T_KV>
 static __global__ void flash_attn_ext_back_stats(
-        const float * GGML_CUDA_RESTRICT q,
-        const T_KV  * GGML_CUDA_RESTRICT k,
-        const half  * GGML_CUDA_RESTRICT mask,
-        const float * GGML_CUDA_RESTRICT o,
-        const float * GGML_CUDA_RESTRICT grad_o,
-              float * GGML_CUDA_RESTRICT dst,
+        const float * q_ptr,
+        const T_KV  * k_ptr,
+        const half  * mask_ptr,
+        const float * o_ptr,
+        const float * grad_o_ptr,
+              float * dst_ptr,
         const ggml_cuda_flash_attn_ext_back_kargs args) {
+    const float * GGML_CUDA_RESTRICT q      = q_ptr;
+    const T_KV  * GGML_CUDA_RESTRICT k      = k_ptr;
+    const half  * GGML_CUDA_RESTRICT mask   = mask_ptr;
+    const float * GGML_CUDA_RESTRICT o      = o_ptr;
+    const float * GGML_CUDA_RESTRICT grad_o = grad_o_ptr;
+          float * GGML_CUDA_RESTRICT dst    = dst_ptr;
     const int64_t ir = (int64_t) blockIdx.x*FAB_WARPS + threadIdx.x/WARP_SIZE;
     if (ir >= args.n_q*args.n_head*args.ne3) {
         return;
@@ -116,14 +122,21 @@ static __global__ void flash_attn_ext_back_stats(
 
 template <typename T_KV>
 static __global__ void flash_attn_ext_back_dq(
-        const float * GGML_CUDA_RESTRICT q,
-        const T_KV  * GGML_CUDA_RESTRICT k,
-        const T_KV  * GGML_CUDA_RESTRICT v,
-        const half  * GGML_CUDA_RESTRICT mask,
-        const float * GGML_CUDA_RESTRICT grad_o,
-        const float * GGML_CUDA_RESTRICT stats,
-              float * GGML_CUDA_RESTRICT dst,
+        const float * q_ptr,
+        const T_KV  * k_ptr,
+        const T_KV  * v_ptr,
+        const half  * mask_ptr,
+        const float * grad_o_ptr,
+        const float * stats_ptr,
+              float * dst_ptr,
         const ggml_cuda_flash_attn_ext_back_kargs args) {
+    const float * GGML_CUDA_RESTRICT q      = q_ptr;
+    const T_KV  * GGML_CUDA_RESTRICT k      = k_ptr;
+    const T_KV  * GGML_CUDA_RESTRICT v      = v_ptr;
+    const half  * GGML_CUDA_RESTRICT mask   = mask_ptr;
+    const float * GGML_CUDA_RESTRICT grad_o = grad_o_ptr;
+    const float * GGML_CUDA_RESTRICT stats  = stats_ptr;
+          float * GGML_CUDA_RESTRICT dst    = dst_ptr;
     const int64_t ir = (int64_t) blockIdx.x*FAB_WARPS + threadIdx.x/WARP_SIZE;
     if (ir >= args.n_q*args.n_head*args.ne3) {
         return;
@@ -165,14 +178,21 @@ static __global__ void flash_attn_ext_back_dq(
 
 template <typename T_KV>
 static __global__ void flash_attn_ext_back_dkv(
-        const float * GGML_CUDA_RESTRICT q,
-        const T_KV  * GGML_CUDA_RESTRICT k,
-        const T_KV  * GGML_CUDA_RESTRICT v,
-        const half  * GGML_CUDA_RESTRICT mask,
-        const float * GGML_CUDA_RESTRICT grad_o,
-        const float * GGML_CUDA_RESTRICT stats,
-              float * GGML_CUDA_RESTRICT dst,
+        const float * q_ptr,
+        const T_KV  * k_ptr,
+        const T_KV  * v_ptr,
+        const half  * mask_ptr,
+        const float * grad_o_ptr,
+        const float * stats_ptr,
+              float * dst_ptr,
         const ggml_cuda_flash_attn_ext_back_kargs args) {
+    const float * GGML_CUDA_RESTRICT q      = q_ptr;
+    const T_KV  * GGML_CUDA_RESTRICT k      = k_ptr;
+    const T_KV  * GGML_CUDA_RESTRICT v      = v_ptr;
+    const half  * GGML_CUDA_RESTRICT mask   = mask_ptr;
+    const float * GGML_CUDA_RESTRICT grad_o = grad_o_ptr;
+    const float * GGML_CUDA_RESTRICT stats  = stats_ptr;
+          float * GGML_CUDA_RESTRICT dst    = dst_ptr;
     const int64_t ir     = (int64_t) blockIdx.x*FAB_WARPS + threadIdx.x/WARP_SIZE;
     const int64_t n_rows = args.n_kv*args.n_head_kv*args.ne3;
     if (ir >= n_rows) {
