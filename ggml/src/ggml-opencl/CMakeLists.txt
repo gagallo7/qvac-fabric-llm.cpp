@@ -310,6 +310,11 @@ set(GGML_OPENCL_KERNELS
     cumsum
     transpose
     concat
+    gru
+    zero_upsample
+    channel_shuffle
+    affine_prelu
+    snake
     tsembd
     upscale
     tanh
