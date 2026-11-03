@@ -4,11 +4,30 @@
 #include "htp-opnode.h"
 #include "htp-repack.h"
 
+#include <cstring>
+#include <utility>
+#include <vector>
+
 struct htp_tensor_extra {
-    std::vector<uint8_t> shadow_buf;
-    size_t               shadow_size { 0 };
-    uint32_t             flags { 0 };
+    std::vector<uint8_t>                   shadow_buf;
+    std::vector<std::pair<size_t, size_t>> shadow_coverage;
+    bool                                   repack_ready { false };
+    uint32_t                               flags { 0 };
+
+    explicit htp_tensor_extra(uint32_t flags = 0) : flags(flags) {}
 };
+
+static inline const ggml_tensor * htp_repack_owner(const ggml_tensor * tensor) {
+    if (!htp_is_tiled_weight_type(tensor->type)) {
+        return tensor;
+    }
+    while (tensor->view_src && tensor->view_offs == 0 && tensor->type == tensor->view_src->type &&
+           ggml_are_same_shape(tensor, tensor->view_src) &&
+           memcmp(tensor->nb, tensor->view_src->nb, sizeof(tensor->nb)) == 0) {
+        tensor = tensor->view_src;
+    }
+    return tensor;
+}
 
 extern int    opt_arch;
 extern size_t opt_ndev;
@@ -62,7 +81,7 @@ static inline bool htp_can_rt_repack(const struct ggml_tensor * t) {
 }
 
 static inline bool htp_tensor_is_tiled(const struct ggml_tensor * t) {
-    const auto * extra = (const struct htp_tensor_extra *) t->extra;
+    const auto * extra = (const struct htp_tensor_extra *) htp_repack_owner(t)->extra;
     if (extra && (extra->flags & HTP_TENSOR_TILED)) {
         return true;
     }
@@ -70,7 +89,7 @@ static inline bool htp_tensor_is_tiled(const struct ggml_tensor * t) {
 }
 
 static inline bool htp_needs_repack(const struct ggml_tensor * t) {
-    const auto * extra = (const struct htp_tensor_extra *) t->extra;
+    const auto * extra = (const struct htp_tensor_extra *) htp_repack_owner(t)->extra;
     if (extra && (extra->flags & HTP_TENSOR_TILED)) {
         return false;
     }
@@ -100,6 +119,8 @@ size_t       htp_session_vtcm_size(const struct ggml_hexagon_session * sess);
 uint32_t     htp_session_n_threads(const struct ggml_hexagon_session * sess);
 uint32_t     htp_session_n_hmx(const struct ggml_hexagon_session * sess);
 uint32_t     htp_session_mdev_count(const struct ggml_hexagon_session * sess);
+
+bool         ggml_backend_buffer_is_hexagon(const struct ggml_backend_buffer * b);
 
 htp_op_code  htp_op_remap(const struct ggml_tensor * t);
 
